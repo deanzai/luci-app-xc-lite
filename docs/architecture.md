@@ -12,7 +12,7 @@ LAN clients
                     routing rules
               ┌────────────┼────────────┐
               ▼            ▼            ▼
-        reality-uk   proxy-selected   direct/block
+           proxy     proxy-selected   direct/block
         fixed route    xc current       local rules
                            │
                   VLESS REALITY or

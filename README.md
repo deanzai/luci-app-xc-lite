@@ -6,7 +6,7 @@
 
 - 使用官方 Xray-core 独立运行，不依赖 v2rayA、PassWall 或 sing-box 控制面板。
 - 保留 REALITY 与 NaiveProxy 两类出站节点。
-- `reality-uk` 固定承担指定 geosite 分流。
+- `proxy` 固定承担指定 geosite 分流。
 - `xc` 当前选择节点承担普通海外流量和最终 fallback。
 - DoH 查询经代理发送，禁用本地 DNS fallback。
 - 切换失败时恢复上一份配置。
@@ -36,8 +36,8 @@ xc rollback    # 恢复上一份配置
 
 ```text
 ID  TYPE                 NODE                          LATENCY
-*  1  [VLESS REALITY     ] reality-uk                   582
-  9  [NaiveProxy SOCKS5 ] Naive-na217                   550
+*  1  [VLESS REALITY     ] proxy                        582
+  2  [NaiveProxy SOCKS5 ] naive-example                 550
 ```
 
 延迟测试会为每个节点生成临时 Xray 配置、临时监听端口，并通过该端口访问 `generate_204`。因此测量的是完整代理链，而非单纯 TCP ping。
@@ -47,11 +47,11 @@ ID  TYPE                 NODE                          LATENCY
 1. DNS 查询进入 `dns-proxy`，发送到 `proxy-selected`。
 2. 广告域名进入 `block`。
 3. 私网、局域网和国内地址进入 `direct`。
-4. OpenAI、YouTube、Twitter、Telegram、TikTok、Netflix、Google、Facebook 等 geosite 固定走 `reality-uk`。
+4. OpenAI、YouTube、Twitter、Telegram、TikTok、Netflix、Google、Facebook 等 geosite 固定走 `proxy`。
 5. `geosite:geolocation-!cn` 走当前选择节点。
-6. 自定义海外例外和未命中流量最终走当前选择节点。
+6. 未命中流量最终走当前选择节点。
 
-切换节点只改变 `proxy-selected`，不会改变 `reality-uk` 固定分流。
+切换节点只改变 `proxy-selected`，不会改变 `proxy` 固定分流。
 
 ## DNS 防泄露
 
@@ -98,11 +98,11 @@ ID  TYPE                 NODE                          LATENCY
 ```json
 {
   "version": 1,
-  "reality_uk_id": 1,
+  "fixed_proxy_id": 1,
   "nodes": [
     {
       "id": 1,
-      "name": "reality-example",
+      "name": "proxy-example",
       "type": "VLESS REALITY",
       "server": "example.invalid",
       "port": 443,

@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "reality_uk_id": 1,
+  "fixed_proxy_id": 1,
   "nodes": [
     {
       "id": 1,
-      "name": "reality-example",
+      "name": "proxy-example",
       "type": "VLESS REALITY",
       "server": "example.invalid",
       "port": 443,

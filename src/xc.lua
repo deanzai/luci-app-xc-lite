@@ -127,7 +127,7 @@ local function make_config(node, socks_port, http_port)
     socks_port = socks_port or 7890
     http_port = http_port or 10809
     local selected = make_outbound(node, "proxy-selected")
-    local fixed = make_outbound(node._reality_uk, "reality-uk")
+    local fixed = make_outbound(node._fixed_proxy, "proxy")
     return {
         log = {loglevel = "warning"},
         dns = {
@@ -171,19 +171,18 @@ local function make_config(node, socks_port, http_port)
                 {type = "field", ip = {"geoip:private"}, outboundTag = "direct"},
                 {type = "field", domain = {"geosite:private"}, outboundTag = "direct"},
                 {type = "field", ip = {"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.0/8"}, outboundTag = "direct"},
-                {type = "field", domain = {"geosite:openai", "geosite:youtube", "geosite:twitter", "geosite:telegram", "geosite:tiktok", "geosite:netflix", "geosite:google", "geosite:facebook", "full:voice.google.com", "domain:voice.googleusercontent.com"}, outboundTag = "reality-uk"},
+                {type = "field", domain = {"geosite:openai", "geosite:youtube", "geosite:twitter", "geosite:telegram", "geosite:tiktok", "geosite:netflix", "geosite:google", "geosite:facebook", "full:voice.google.com", "domain:voice.googleusercontent.com"}, outboundTag = "proxy"},
                 {type = "field", domain = {"geosite:geolocation-!cn"}, outboundTag = "proxy-selected"},
                 {type = "field", ip = {"geoip:cn"}, outboundTag = "direct"},
                 {type = "field", domain = {"geosite:cn"}, outboundTag = "direct"},
-                {type = "field", domain = {"full:publicwsldistros.blob.core.windows.net", "full:services.googleapis.cn", "full:registry-1.docker.io", "full:www.cpu-monkey.com", "domain:armbian.org", "domain:armbian.com", "domain:cpu-monkey.com", "domain:vsean.net"}, outboundTag = "proxy-selected"}
             }
         }
     }
 end
 
 local function make_config_for(nodes, node, socks_port, http_port)
-    node._reality_uk = find_node(nodes, nodes.reality_uk_id)
-    assert(node._reality_uk, "reality-uk node missing")
+    node._fixed_proxy = find_node(nodes, nodes.fixed_proxy_id)
+    assert(node._fixed_proxy, "fixed proxy node missing")
     return make_config(node, socks_port, http_port)
 end
 
