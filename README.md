@@ -172,3 +172,19 @@ xc/
 └── .gitignore
 ```
 
+## 使用本地 token 推送
+
+项目附带 `push.ps1`。默认从项目上级目录的 `github_token.txt` 读取 token，不把 token 写入 Git 配置、remote URL 或提交内容：
+
+```powershell
+.\push.ps1
+```
+
+也可以指定 token 文件、远端和分支：
+
+```powershell
+.\push.ps1 -TokenFile "C:\path\github_token.txt" -Remote origin -Branch main
+```
+
+token 文件只保留 token 本身，并且必须保持在仓库外。
+
