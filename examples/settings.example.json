@@ -1,0 +1,6 @@
+{
+  "listen_host": "192.168.1.1",
+  "proxy_host": "192.168.1.1",
+  "probe_url": "http://www.gstatic.com/generate_204",
+  "health_url": "https://api.ipify.org"
+}

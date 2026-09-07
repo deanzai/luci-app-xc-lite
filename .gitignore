@@ -1,0 +1,28 @@
+# Production credentials and generated state
+nodes.json
+config.json
+settings.json
+*.previous
+backups/
+*.backup-*
+*.log
+*.pid
+
+# Local deployment artifacts
+.env
+id_*
+*_credentials.txt
+router-*.json
+deploy-local.*
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Downloaded binaries and rule databases
+xray
+naive
+geoip.dat
+geosite.dat
+*.zip
+*.tar.*
