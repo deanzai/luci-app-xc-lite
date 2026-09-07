@@ -15,7 +15,6 @@ id_*
 router-*.json
 deploy-local.*
 github_token.txt
-push-askpass-*.ps1
 
 # Python cache
 __pycache__/

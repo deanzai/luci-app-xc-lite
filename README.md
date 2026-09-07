@@ -25,7 +25,7 @@ Xray 没有 sing-box 的 `mixed` 入站，因此使用两个端口：
 ## 命令
 
 ```sh
-xc -l          # 列出固定编号、类型和完整代理链延迟
+xc list        # 列出固定编号、类型和完整代理链延迟
 xc 1           # 切换 proxy-selected 到节点 1
 xc current     # 显示当前节点
 xc test        # 检查 SOCKS5/HTTP 出口
@@ -140,7 +140,7 @@ xray run -test -c /etc/xc/config.json
 /etc/init.d/xc-xray enable
 /etc/init.d/xc-xray start
 xc test
-xc -l
+xc list
 ```
 
 ## 安全注意事项
@@ -155,7 +155,7 @@ xc -l
 
 - Xray 不提供 sing-box 的 mixed 入站，必须分别配置 SOCKS 和 HTTP 端口。
 - geosite 分类名称必须存在于所安装的 `geosite.dat`；缺失分类会导致 `xray run -test` 失败。
-- `xc -l` 会串行探测节点，节点较多时耗时可能较长。
+- `xc list` 会串行探测节点，节点较多时耗时可能较长。
 - NaiveProxy 出站要求本机对应的 45321–45325 SOCKS 监听已经运行。
 
 ## 项目结构
@@ -171,20 +171,3 @@ xc/
 ├── LICENSE
 └── .gitignore
 ```
-
-## 使用本地 token 推送
-
-项目附带 `push.ps1`。默认从项目上级目录的 `github_token.txt` 读取 token，不把 token 写入 Git 配置、remote URL 或提交内容：
-
-```powershell
-.\push.ps1
-```
-
-也可以指定 token 文件、远端和分支：
-
-```powershell
-.\push.ps1 -TokenFile "C:\path\github_token.txt" -Remote origin -Branch main
-```
-
-token 文件只保留 token 本身，并且必须保持在仓库外。
-

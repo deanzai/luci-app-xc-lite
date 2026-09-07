@@ -285,7 +285,7 @@ end
 
 local data = nodes_data()
 local command = arg[1] or "current"
-if command == "-l" or command == "list" then
+if command == "list" then
     list_nodes(data)
 elseif command == "current" then
     local id = current_id()
@@ -304,6 +304,6 @@ elseif command == "rollback" then
 elseif tonumber(command) then
     select_node(tonumber(command))
 else
-    io.stderr:write("usage: xc -l | xc <id> | xc current | xc test | xc rollback\n")
+    io.stderr:write("usage: xc list | xc <id> | xc current | xc test | xc rollback\n")
     os.exit(2)
 end
