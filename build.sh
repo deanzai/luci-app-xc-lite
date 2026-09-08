@@ -16,7 +16,10 @@ cp -r root/* "$BUILD_DIR/data/"
 mkdir -p "$BUILD_DIR/data/www"
 cp -r htdocs/* "$BUILD_DIR/data/www/"
 
-# ??????
+# 清理换行符 CRLF -> LF
+find "$BUILD_DIR/data" -type f \( -name "*.lua" -o -name "*.htm" -o -name "*.js" -o -name "*.json" -o -name "xc" -o -name "luci.xc" -o -name "xc-xray" -o -name "80_luci-app-xc" \) -exec sed -i 's/\r$//' {} + 2>/dev/null || true
+
+# 设置可执行权限
 chmod 0755 "$BUILD_DIR/data/usr/bin/xc"
 chmod 0755 "$BUILD_DIR/data/usr/libexec/rpcd/luci.xc"
 chmod 0755 "$BUILD_DIR/data/etc/init.d/xc-xray"

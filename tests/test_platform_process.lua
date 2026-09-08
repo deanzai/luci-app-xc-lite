@@ -1,0 +1,691 @@
+local t = require "testlib"
+local platform = require "xc.platform"
+
+local XRAY = { "/usr/bin/xray", "run", "-test", "-format", "json", "-c", "/var/etc/xc/config.json" }
+
+local function api_fixture(options)
+  options = options or {}
+  local calls = { spawn = {}, capture = {} }
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = {
+      parse = options.json_parse or function() return nil end,
+      stringify = function() return "{}" end
+    },
+    now = function() return options.now or 100 end,
+    spawn = function(argv, deadline)
+      calls.spawn[#calls.spawn + 1] = { argv = argv, deadline = deadline }
+      return options.spawn_result ~= false
+    end,
+    capture = function(argv, deadline, maximum, raw)
+      calls.capture[#calls.capture + 1] = { argv = argv, deadline = deadline, maximum = maximum, raw = raw }
+      return options.output
+    end
+  })
+  return calls, adapters.exec
+end
+
+t.test("xray API override uses the selected path and fixed argv on success", function()
+  local calls, exec = api_fixture()
+  t.eq(exec.xray_api_override("/etc/xc/xray/versions/v26_6_27/xray", "xc-balancer", "xc-node-node_1"), true)
+  t.eq(table.concat(calls.spawn[1].argv, "|"), "/etc/xc/xray/versions/v26_6_27/xray|api|bo|--server=127.0.0.1:10085|-b|xc-balancer|xc-node-node_1")
+  t.eq(calls.spawn[1].deadline, 110)
+end)
+
+t.test("xray API override reports process failure", function()
+  local calls, exec = api_fixture({ spawn_result = false })
+  t.eq(exec.xray_api_override("/usr/bin/xray", "xc-balancer", "xc-node-node_1"), false)
+  t.eq(#calls.spawn, 1)
+end)
+
+t.test("xray API override uses a bounded timeout for a timed out process", function()
+  local calls, exec = api_fixture({ now = 50, spawn_result = false })
+  t.eq(exec.xray_api_override("/usr/bin/xray", "xc-balancer", "xc-node-node_1"), false)
+  t.eq(calls.spawn[1].deadline, 60)
+  t.truthy(calls.spawn[1].deadline < 1000000)
+end)
+
+t.test("xray API balancer uses fixed argv and parses CLI current tag", function()
+  local calls, exec = api_fixture({ output = "Balancer: xc-balancer\nCurrent: xc-node-node_2\n" })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), "xc-node-node_2")
+  t.eq(table.concat(calls.capture[1].argv, "|"), "/usr/bin/xray|api|bi|--server=127.0.0.1:10085|xc-balancer")
+  t.eq(calls.capture[1].deadline, 110)
+  t.eq(calls.capture[1].maximum, 4096)
+  t.eq(calls.capture[1].raw, true)
+end)
+
+t.test("xray API balancer parses the v26 table output override tag", function()
+  local output = [[
+  - Selecting Override:
+    1   xc-node-node_2
+  - Selects:
+    1   xc-node-node_1
+    2   xc-node-node_2
+]]
+  local _, exec = api_fixture({ output = output })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), "xc-node-node_2")
+end)
+
+t.test("xray API balancer does not treat a v26 select list as the current tag", function()
+  local output = [[
+  - Selecting Override:
+    1
+  - Selects:
+    1   xc-node-node_1
+]]
+  local _, exec = api_fixture({ output = output })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+end)
+
+t.test("xray API balancer parses a JSON selected tag for the requested balancer", function()
+  local json = '{"balancer":"xc-balancer","selected":"xc-node-node_3"}'
+  local parsed = false
+  local calls, exec = api_fixture({
+    output = json,
+    json_parse = function(value)
+      parsed = value == json
+      if parsed then return { balancer = "xc-balancer", selected = "xc-node-node_3" } end
+    end
+  })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), "xc-node-node_3")
+  t.eq(parsed, true)
+  t.eq(#calls.capture, 1)
+end)
+
+t.test("xray API balancer parses a JSON current tag for the requested balancer", function()
+  local calls, exec = api_fixture({
+    output = '{"balancer":"xc-balancer","current":"xc-node-node_4"}',
+    json_parse = function()
+      return { balancer = "xc-balancer", current = "xc-node-node_4" }
+    end
+  })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), "xc-node-node_4")
+  t.eq(#calls.capture, 1)
+end)
+
+t.test("xray API balancer fails closed on inconsistent JSON current and selected tags", function()
+  local _, exec = api_fixture({
+    output = '{"balancer":"xc-balancer","current":"xc-node-node_1","selected":"xc-node-node_2"}',
+    json_parse = function()
+      return { balancer = "xc-balancer", current = "xc-node-node_1", selected = "xc-node-node_2" }
+    end
+  })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+end)
+
+t.test("xray API balancer fails closed on an incorrect JSON balancer", function()
+  local _, exec = api_fixture({
+    output = '{"balancer":"other-balancer","current":"xc-node-node_1"}',
+    json_parse = function()
+      return { balancer = "other-balancer", current = "xc-node-node_1" }
+    end
+  })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+end)
+
+t.test("xray API balancer fails closed on non-table or invalid JSON fields", function()
+  local cases = {
+    "xc-node-node_1",
+    { balancer = "xc-balancer", current = 42 },
+    { balancer = "xc-balancer", selected = true }
+  }
+  for _, parsed in ipairs(cases) do
+    local _, exec = api_fixture({
+      output = "{}",
+      json_parse = function() return parsed end
+    })
+    t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  end
+end)
+
+t.test("xray API balancer fails closed when JSON parsing errors after a balancer-only response", function()
+  local calls, exec = api_fixture({
+    output = "Balancer: xc-balancer\n",
+    json_parse = function() error("invalid JSON") end
+  })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  t.eq(#calls.capture, 1)
+end)
+
+t.test("xray API balancer fails closed on process failure", function()
+  local _, exec = api_fixture({ output = nil })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+end)
+
+t.test("xray API balancer fails closed on oversized output", function()
+  local calls, exec = api_fixture({ output = string.rep("x", 4097) })
+  t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  t.eq(calls.capture[1].maximum, 4096)
+end)
+
+t.test("xray API balancer fails closed on malformed or unsafe output", function()
+  local malformed = {
+    "Current: xc-node-node_1;secret\n",
+    "Current: not-a-node-tag\n",
+    "Current: xc-node-node_1\nSelected: xc-node-node_2;secret\n"
+  }
+  for _, output in ipairs(malformed) do
+    local _, exec = api_fixture({ output = output })
+    t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  end
+end)
+
+t.test("xray API calls reject unsafe paths and tags without spawning or capturing", function()
+  local invalid_override = {
+    { "/tmp/xray", "xc-balancer", "xc-node-node_1" },
+    { "/usr/bin/xray", "xc balancer", "xc-node-node_1" },
+    { "/usr/bin/xray", "xc-balancer;secret", "xc-node-node_1" },
+    { "/usr/bin/xray", "xc-balancer", "xc node" },
+    { "/usr/bin/xray", "xc-balancer", "xc-node-node_1;secret" },
+    { "/usr/bin/xray", "xc-balancer", "xc-node-a-b" },
+    { "/usr/bin/xray", "xc-balancer", "xc-node--" },
+    { "/usr/bin/xray", "xc-balancer", "xc-node-" .. string.rep("a", 64) },
+    { "/usr/bin/xray", "xc-balancer", "xc-node-node_1\nsecret" }
+  }
+  for _, value in ipairs(invalid_override) do
+    local calls, exec = api_fixture({ output = "Current: xc-node-node_1\n" })
+    t.eq(exec.xray_api_override(value[1], value[2], value[3]), false)
+    t.eq(#calls.spawn, 0)
+    t.eq(#calls.capture, 0)
+  end
+
+  local invalid_balancer = {
+    { "/tmp/xray", "xc-balancer" },
+    { "/usr/bin/xray", "xc balancer" },
+    { "/usr/bin/xray", "xc-balancer;secret" },
+    { "/usr/bin/xray", "xc-balancer\nsecret" },
+    { "/usr/bin/xray", string.rep("x", 65) }
+  }
+  for _, value in ipairs(invalid_balancer) do
+    local calls, exec = api_fixture({ output = "Current: xc-node-node_1\n" })
+    t.eq(exec.xray_api_balancer(value[1], value[2]), nil)
+    t.eq(#calls.spawn, 0)
+    t.eq(#calls.capture, 0)
+  end
+end)
+
+t.test("xray API balancer requires the requested balancer in CLI output", function()
+  local outputs = {
+    "Current: xc-node-node_1\n",
+    "Balancer: other-balancer\nCurrent: xc-node-node_1\n"
+  }
+  for _, output in ipairs(outputs) do
+    local _, exec = api_fixture({ output = output })
+    t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  end
+end)
+
+t.test("xray API balancer fails closed on mixed JSON or invalid text output", function()
+  local outputs = {
+    "Balancer: xc-balancer\nCurrent: xc-node-node_1\n{\"unexpected\":true}\n",
+    "Balancer: xc-balancer\nCurrent: xc-node-node_1\nnot a field\n",
+    "Balancer: xc-balancer\nCurrent: xc-node-node_1\n乱码\n"
+  }
+  for _, output in ipairs(outputs) do
+    local _, exec = api_fixture({ output = output })
+    t.eq(exec.xray_api_balancer("/usr/bin/xray", "xc-balancer"), nil)
+  end
+end)
+
+t.test("xray API balancer never returns complete API output", function()
+  local output = "Balancer: xc-balancer\nCurrent: xc-node-node_4\nsecret-field: UUID-or-token\n"
+  local _, exec = api_fixture({ output = output })
+  local selected = exec.xray_api_balancer("/usr/bin/xray", "xc-balancer")
+  t.eq(selected, "xc-node-node_4")
+  t.eq(selected ~= output, true, "API output must not be returned verbatim")
+  t.eq(selected:find("UUID-or-token", 1, true), nil)
+end)
+
+local function process_fixture(wait_results, options)
+  options = options or {}
+  local state = { now = 0, events = {}, wait_index = 0, reaped = false, killed = false }
+  local nixio = {
+    stdout = 1, stderr = 2,
+    fork = function() state.events[#state.events + 1] = "fork"; return 42 end,
+    waitpid = function(pid, mode)
+      state.events[#state.events + 1] = "wait:" .. tostring(pid) .. ":" .. tostring(mode)
+      if mode == nil then state.reaped = true; return pid, "signaled", 9 end
+      state.wait_index = state.wait_index + 1
+      local value = state.killed and options.after_kill or wait_results[state.wait_index] or { false }
+      if value[1] == pid then state.reaped = true end
+      return unpack(value)
+    end,
+    kill = function(pid, signal)
+      state.events[#state.events + 1] = "kill:" .. pid .. ":" .. signal
+      if signal == 9 then state.killed = true end
+      return true
+    end
+  }
+  local adapters = platform.new({
+    nixio = nixio, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return state.now end,
+    sleep = function(seconds) state.now = state.now + seconds; state.events[#state.events + 1] = "sleep" end
+  })
+  return state, adapters.exec
+end
+
+t.test("child execution polls nohang and reaps a successful exit before deadline", function()
+  local state, exec = process_fixture({ { false }, { 42, "exited", 0 } })
+  t.eq(exec.run(XRAY, 1), true)
+  t.eq(state.reaped, true)
+  t.contains(table.concat(state.events, "|"), "wait:42:nohang")
+  t.eq(table.concat(state.events, "|"):find("kill:", 1, true), nil)
+end)
+
+t.test("child timeout sends TERM then KILL and reaps with bounded nohang polling", function()
+  local state, exec = process_fixture({ { false } }, { after_kill = { 42, "signaled", 9 } })
+  t.eq(exec.run(XRAY, 0.15), false)
+  local events = table.concat(state.events, "|")
+  t.contains(events, "kill:42:15")
+  t.contains(events, "kill:42:9")
+  t.eq(events:find("wait:42:nil", 1, true), nil)
+  t.eq(state.reaped, true)
+end)
+
+t.test("permanent wait errors fail and still terminate and reap the child", function()
+  local state, exec = process_fixture({ { nil, "ECHILD" } }, { after_kill = { 42, "signaled", 9 } })
+  t.eq(exec.run(XRAY, 1), false)
+  local events = table.concat(state.events, "|")
+  t.contains(events, "kill:42:15")
+  t.eq(events:find("wait:42:nil", 1, true), nil)
+  t.eq(state.reaped, true)
+end)
+
+t.test("SIGKILL does not permit an unbounded blocking reap when the child remains alive", function()
+  local state, exec = process_fixture({ { false } })
+  t.eq(exec.run(XRAY, 0.15), false)
+  local events = table.concat(state.events, "|")
+  t.contains(events, "kill:42:9")
+  t.eq(events:find("wait:42:nil", 1, true), nil)
+  t.eq(state.reaped, false)
+  t.truthy(state.now < 3)
+end)
+
+t.test("exec run has a bounded default deadline", function()
+  local state, exec = process_fixture({ { false } }, { after_kill = { 42, "signaled", 9 } })
+  state.now = 100
+  t.eq(exec.run(XRAY), false)
+  t.contains(table.concat(state.events, "|"), "kill:42:15")
+  t.eq(state.reaped, true)
+end)
+
+t.test("exec run forwards the selected Xray asset directory", function()
+  local captured
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 0 end,
+    spawn = function(argv, deadline, environment)
+      captured = environment
+      return true
+    end
+  })
+  t.eq(adapters.exec.run(XRAY, 1, { XRAY_LOCATION_ASSET = "/usr/share/v2ray" }), true)
+  t.eq(captured.XRAY_LOCATION_ASSET, "/usr/share/v2ray")
+end)
+
+t.test("background switch forwards only a safe fixed command and returns without waiting", function()
+  local captured
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    background = function(argv)
+      captured = argv
+      return true
+    end
+  })
+  t.eq(adapters.exec.start_switch("node_1"), true)
+  t.eq(table.concat(captured, "|"), "/usr/bin/xc|switch|node_1")
+  t.eq(adapters.exec.start_switch("bad;node"), false)
+end)
+
+t.test("background restart and recovery use dedicated fixed commands", function()
+  local captured = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    background = function(argv)
+      captured[#captured + 1] = argv
+      return true
+    end
+  })
+  t.eq(adapters.exec.start_restart(), true)
+  t.eq(table.concat(captured[1], "|"), "/usr/bin/xc|restart-service")
+  t.eq(adapters.exec.start_recover(), true)
+  t.eq(table.concat(captured[2], "|"), "/usr/bin/xc|recover-service")
+end)
+
+t.test("platform defaults the asset environment from a stat adapter", function()
+  local captured
+  platform.new({
+    nixio = { setenv = function(name, value) captured = { name, value }; return true end },
+    fs = { stat = function(path)
+      return path:match("^/usr/share/v2ray/") and { type = "reg" } or nil
+    end },
+    cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end }
+  })
+  t.eq(captured[1], "XRAY_LOCATION_ASSET")
+  t.eq(captured[2], "/usr/share/v2ray")
+end)
+
+t.test("platform does not probe a LuCI fs module through its looping metatable", function()
+  local looping_fs = setmetatable({}, { __index = function(value, key) return value[key] end })
+  local called = pcall(platform.new, {
+    nixio = { setenv = function() return true end }, fs = looping_fs,
+    cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end }
+  })
+  t.eq(called, true)
+end)
+
+t.test("asset download accepts only fixed sources and bounded temporary paths", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = { argv = argv, deadline = deadline }
+      return true
+    end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  local temporary = "/etc/xc/xray/assets/.asset-update-geoip"
+  t.eq(adapters.exec.download(valid, temporary, 67108864, 20), true)
+  t.eq(table.concat(calls[1].argv, "|"), "/usr/bin/curl|--fail|--location|--silent|--show-error|--max-time|10|--connect-timeout|5|--speed-limit|10240|--speed-time|30|--max-filesize|67108864|--output|" .. temporary .. "|" .. valid)
+  t.eq(calls[1].deadline, 20)
+  t.eq(adapters.exec.download(valid, temporary, 67108864, 610), true)
+  t.eq(calls[2].deadline, 610)
+  t.eq(adapters.exec.download(valid, temporary, 67108864, 1210), true)
+  t.eq(calls[3].deadline, 1210)
+  local mirror = "https://testingcf.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat"
+  t.eq(adapters.exec.download(mirror, temporary, 67108864, 20), true)
+  t.eq(calls[4].argv[#calls[4].argv], mirror)
+  t.eq(adapters.exec.download("https://example.invalid/geoip.dat", temporary, 67108864, 20), false)
+  t.eq(adapters.exec.download(valid, "/tmp/asset-update-geoip", 67108864, 20), false)
+  t.eq(#calls, 4)
+end)
+
+t.test("asset download accepts only the fixed cancellation path and stops a marked child", function()
+  local state = { now = 0, cancelled = false, killed = {} }
+  local nixio = {
+    stdout = 1, stderr = 2,
+    fork = function() return 42 end,
+    waitpid = function(pid, mode)
+      if mode == nil then return pid, "signaled", 15 end
+      if state.cancelled then return pid, "signaled", 15 end
+      return false
+    end,
+    kill = function(pid, signal) state.killed[#state.killed + 1] = { pid = pid, signal = signal }; return true end
+  }
+  local adapters = platform.new({
+    nixio = nixio, fs = {
+      stat = function(path)
+        if path == "/var/etc/xc/asset-update-cancel" and state.cancelled then return { type = "reg" } end
+      end
+    }, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() state.now = state.now + 0.1; return state.now end,
+    sleep = function() state.cancelled = true end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  t.eq(adapters.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20,
+    "/var/etc/xc/asset-update-cancel"), false)
+  t.eq(state.killed[1].pid, 42)
+  t.eq(state.killed[1].signal, 15)
+  t.eq(adapters.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20,
+    "/tmp/not-fixed"), false)
+end)
+
+t.test("asset download proxy can be disabled and overridden via uci global", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "0", asset_proxy_type = "http",
+        asset_proxy_address = "10.0.0.1", asset_proxy_port = "8888" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = { argv = argv, deadline = deadline }
+      return true
+    end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  local temporary = "/etc/xc/xray/assets/.asset-update-geoip"
+  t.eq(adapters.exec.download(valid, temporary, 67108864, 20), true)
+  local joined = table.concat(calls[1].argv, "|")
+  t.eq(joined:find("socks5-hostname", 1, true), nil, "disabled proxy must not inject socks args")
+  t.eq(joined:find("--proxy", 1, true), nil, "disabled proxy must not inject http args")
+  t.contains(joined, "--speed-limit")
+end)
+
+t.test("asset download uses an http proxy when configured", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "1", asset_proxy_type = "http",
+        asset_proxy_address = "10.0.0.1", asset_proxy_port = "8888" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = argv
+      return true
+    end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  t.eq(adapters.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20), true)
+  t.contains(table.concat(calls[1], "|"), "--proxy|http://10.0.0.1:8888")
+end)
+
+t.test("asset download sends proxy credentials when configured", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "1", asset_proxy_type = "socks",
+        asset_proxy_address = "10.0.0.1", asset_proxy_port = "8888",
+        asset_proxy_username = "user", asset_proxy_password = "pass" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = argv
+      return true
+    end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  t.eq(adapters.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20), true)
+  t.contains(table.concat(calls[1], "|"), "--socks5-hostname|10.0.0.1:8888")
+  t.contains(table.concat(calls[1], "|"), "--proxy-user|user:pass")
+end)
+
+t.test("asset download sends an http proxy with credentials and a bare username", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "1", asset_proxy_type = "http",
+        asset_proxy_address = "10.0.0.1", asset_proxy_port = "8888",
+        asset_proxy_username = "user", asset_proxy_password = "pass" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = argv
+      return true
+    end
+  })
+  local valid = "https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat"
+  t.eq(adapters.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20), true)
+  t.contains(table.concat(calls[1], "|"), "--proxy|http://10.0.0.1:8888")
+  t.contains(table.concat(calls[1], "|"), "--proxy-user|user:pass")
+
+  local bare = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "1", asset_proxy_type = "socks",
+        asset_proxy_address = "10.0.0.1", asset_proxy_port = "8888",
+        asset_proxy_username = "user", asset_proxy_password = "" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    spawn = function(argv, deadline)
+      calls[#calls + 1] = argv
+      return true
+    end
+  })
+  t.eq(bare.exec.download(valid, "/etc/xc/xray/assets/.asset-update-geoip", 67108864, 20), true)
+  t.contains(table.concat(calls[2], "|"), "--proxy-user|user")
+  t.eq(table.concat(calls[2], "|"):find("user:", 1, true), nil, "a bare username must not append a colon")
+end)
+
+t.test("asset metadata routes requests through the configured proxy", function()
+  local outputs = {
+    "HTTP/2 200\r\netag: \"abc\"\r\ncontent-length: 123\r\n\r\n"
+  }
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, uci_module = {},
+    cursor = { foreach = function(_, _, kind, callback)
+      if kind == "global" then callback({ [".name"] = "global", [".type"] = "global",
+        asset_proxy_enabled = "1", asset_proxy_address = "192.168.6.1", asset_proxy_port = "7890" }) end
+    end },
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    capture = function(argv, deadline, maximum, raw)
+      calls[#calls + 1] = argv
+      return table.remove(outputs, 1)
+    end
+  })
+  local value = adapters.exec.remote_metadata("https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat", 120)
+  t.eq(value.size, 123)
+  t.contains(table.concat(calls[1], "|"), "--socks5-hostname|192.168.6.1:7890")
+end)
+
+t.test("asset metadata parses the final redirected response headers", function()
+  local _, exec = api_fixture({ output = "HTTP/1.1 301 Moved\r\nlocation: /next\r\n\r\nHTTP/2 200\r\netag: \"abc\"\r\nlast-modified: yesterday\r\ncontent-length: 123\r\n\r\n" })
+  local value = exec.remote_metadata("https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat", 120)
+  t.eq(value.etag, '"abc"')
+  t.eq(value.last_modified, "yesterday")
+  t.eq(value.size, 123)
+end)
+
+t.test("asset metadata uses a range response when HEAD omits the total size", function()
+  local outputs = {
+    "HTTP/2 200\r\netag: \"abc\"\r\n\r\n",
+    "HTTP/2 206\r\ncontent-length: 1\r\ncontent-range: bytes 0-0/3376429\r\n\r\n"
+  }
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    capture = function(argv, deadline, maximum, raw)
+      calls[#calls + 1] = { argv = argv, deadline = deadline, maximum = maximum, raw = raw }
+      return table.remove(outputs, 1)
+    end
+  })
+  local value = adapters.exec.remote_metadata("https://testingcf.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geoip.dat", 120)
+  t.eq(value.size, 3376429)
+  t.eq(#calls, 2)
+  t.contains(table.concat(calls[2].argv, "|"), "--range|0-0")
+  t.eq(calls[2].raw, true)
+end)
+
+t.test("asset update starts only a fixed background CLI command", function()
+  local captured
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    background = function(argv) captured = argv; return true end
+  })
+  t.eq(adapters.exec.start_asset_update("geoip", "official", "1700000000-100"), true)
+  t.eq(table.concat(captured, "|"), "/usr/bin/xc|asset-update|geoip|official|1700000000-100")
+  t.eq(adapters.exec.start_asset_update("bad", "official", "1700000000-100"), false)
+end)
+
+t.test("xray extraction fixes the archive member and output path", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end },
+    now = function() return 10 end,
+    extract = function(argv, destination, deadline)
+      calls[#calls + 1] = { argv = argv, destination = destination, deadline = deadline }
+      return true
+    end
+  })
+  t.eq(adapters.exec.extract_xray("/var/etc/xc/.asset-update-xray.zip", "/var/etc/xc/.asset-update-xray", 20), true)
+  t.eq(table.concat(calls[1].argv, "|"), "/usr/bin/unzip|-p|/var/etc/xc/.asset-update-xray.zip|xray")
+  t.eq(calls[1].destination, "/var/etc/xc/.asset-update-xray")
+  t.eq(calls[1].deadline, 20)
+  t.eq(adapters.exec.extract_xray("/tmp/archive.zip", "/var/etc/xc/.asset-update-xray", 20), false)
+  t.eq(#calls, 1)
+end)
+
+t.test("real connection checks use bounded proxy GETs and return measured status", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end }, now = function() return 10 end,
+    capture = function(argv, deadline, maximum, raw)
+      calls[#calls + 1] = { argv = argv, deadline = deadline, maximum = maximum, raw = raw }
+      return "0.123\t204\n"
+    end
+  })
+  local result = adapters.exec.real_connection_check("socks", "fd00::1", 7890, "https://health.invalid", 20)
+  t.eq(result.ok, true)
+  t.eq(result.time, 123)
+  t.eq(result.status, 204)
+  t.eq(calls[1].raw, true)
+  t.eq(calls[1].maximum, 128)
+  t.eq(calls[1].deadline, 20)
+  t.eq(table.concat(calls[1].argv, "|"), "/usr/bin/curl|--fail|--silent|--show-error|--max-time|10|--connect-timeout|5|--write-out|%{time_total}\\t%{http_code}|--output|/dev/null|--socks5-hostname|[fd00::1]:7890|https://health.invalid")
+
+  result = adapters.exec.real_connection_check("http", "fd00::1", 10809, "https://health.invalid", 20)
+  t.eq(result.ok, true)
+  t.eq(result.time, 123)
+  t.eq(result.status, 204)
+  t.eq(calls[2].argv[#calls[2].argv - 1], "http://[fd00::1]:10809")
+end)
+
+t.test("real connection checks fail closed on malformed curl output", function()
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end }, now = function() return 10 end,
+    capture = function() return "not-a-measurement" end
+  })
+  local result = adapters.exec.real_connection_check("socks", "127.0.0.1", 7890, "https://health.invalid", 20)
+  t.eq(result.ok, false)
+end)
+
+t.test("exit IP observation uses fixed curl argv, bounded output, and injected capture", function()
+  local calls = {}
+  local adapters = platform.new({
+    nixio = {}, fs = {}, cursor = { foreach = function() end }, uci_module = {},
+    jsonc = { parse = function() end, stringify = function() return "{}" end }, now = function() return 10 end,
+    capture = function(argv, deadline, maximum)
+      calls[#calls + 1] = { argv = argv, deadline = deadline, maximum = maximum }
+      return "203.0.113.7\n"
+    end
+  })
+  t.eq(adapters.exec.observe_exit_ip("socks", "fd00::1", 7890, "https://health.invalid/ip", 12), "203.0.113.7\n")
+  t.eq(calls[1].deadline, 12); t.eq(calls[1].maximum, 128)
+  t.eq(calls[1].argv[1], "/usr/bin/curl")
+  t.eq(calls[1].argv[#calls[1].argv - 1], "[fd00::1]:7890")
+  t.eq(calls[1].argv[#calls[1].argv], "https://health.invalid/ip")
+  t.eq(table.concat(calls[1].argv, "|"):find("192.168.6.1:7890", 1, true), nil)
+  t.eq(adapters.exec.observe_exit_ip("socks", "127.0.0.1", 7890, "file:///secret", 12), nil)
+  t.eq(adapters.exec.observe_exit_ip("socks", "127.0.0.1", 7890, "https://health.invalid", 10), nil)
+end)

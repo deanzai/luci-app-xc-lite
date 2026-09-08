@@ -1,0 +1,758 @@
+<%
+local dispatcher = require "luci.dispatcher"
+local util = require "luci.util"
+%>
+<div id="xc-core-page"
+  data-core-status-url="<%=dispatcher.build_url("admin", "services", "xc", "core-status")%>"
+  data-core-upload-url="<%=dispatcher.build_url("admin", "services", "xc", "core-upload")%>"
+  data-core-activate-url="<%=dispatcher.build_url("admin", "services", "xc", "core-activate")%>"
+  data-core-rollback-url="<%=dispatcher.build_url("admin", "services", "xc", "core-rollback")%>"
+  data-core-delete-url="<%=dispatcher.build_url("admin", "services", "xc", "core-delete")%>"
+  data-core-resource-update-url="<%=dispatcher.build_url("admin", "services", "xc", "core-resource-update")%>"
+  data-core-resource-update-status-url="<%=dispatcher.build_url("admin", "services", "xc", "core-resource-update-status")%>"
+  data-core-resource-check-url="<%=dispatcher.build_url("admin", "services", "xc", "core-resource-check")%>"
+  data-core-resource-rollback-url="<%=dispatcher.build_url("admin", "services", "xc", "core-resource-rollback")%>"
+  data-core-resource-cancel-url="<%=dispatcher.build_url("admin", "services", "xc", "core-resource-cancel")%>"
+  data-asset-proxy-apply-url="<%=dispatcher.build_url("admin", "services", "xc", "asset-proxy-apply")%>"
+  data-core-token="<%=token%>">
+  <div class="cbi-section xc-core-resources">
+    <h3><%:Core resources update%></h3>
+    <p class="cbi-section-descr"><%:Check the latest Xray core and GeoIP or GeoSite database versions from the selected source, then update independently. Xray updates are installed but not activated.%></p>
+    <div class="table xc-core-resource-table">
+      <div class="tr table-titles">
+        <div class="th"><%:Resource%></div>
+        <div class="th"><%:Download source%></div>
+        <div class="th"><%:Snapshot%></div>
+        <div class="th"><%:Current version%></div>
+        <div class="th"><%:Latest version%></div>
+        <div class="th"><%:Status%></div>
+        <div class="th"><%:Actions%></div>
+      </div>
+      <div class="tr" data-core-resource-kind="xray">
+        <div class="td"><%:Xray core%></div>
+        <div class="td"><select id="xc-core-resource-xray-source" data-core-resource-source="xray"></select></div>
+        <div class="td" id="xc-core-resource-xray-status"><%:Unknown%></div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-xray-current">-</div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-xray-latest">-</div>
+        <div class="td" id="xc-core-resource-xray-checkstatus"><%:Unknown%></div>
+        <div class="td xc-core-resource-actions">
+          <input id="xc-core-resource-xray-check" type="button" class="cbi-button cbi-button-action"
+            data-core-resource-action="update" data-core-resource-kind="xray" value="<%:Check update%>" />
+          <input id="xc-core-resource-xray-rollback" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="rollback" data-core-resource-kind="xray" value="<%:Rollback%>" />
+          <input id="xc-core-resource-xray-cancel" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="cancel" data-core-resource-kind="xray" value="<%:Cancel update%>" disabled="disabled" />
+          <span id="xc-core-resource-xray-operation" class="xc-core-resource-operation" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div class="tr" data-core-resource-kind="geoip">
+        <div class="td"><%:GeoIP database%></div>
+        <div class="td"><select id="xc-core-resource-geoip-source" data-core-resource-source="geoip"></select></div>
+        <div class="td" id="xc-core-resource-geoip-status"><%:Unknown%></div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-geoip-current">-</div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-geoip-latest">-</div>
+        <div class="td" id="xc-core-resource-geoip-checkstatus"><%:Unknown%></div>
+        <div class="td xc-core-resource-actions">
+          <input id="xc-core-resource-geoip-check" type="button" class="cbi-button cbi-button-action"
+            data-core-resource-action="update" data-core-resource-kind="geoip" value="<%:Check update%>" />
+          <input id="xc-core-resource-geoip-rollback" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="rollback" data-core-resource-kind="geoip" value="<%:Rollback%>" />
+          <input id="xc-core-resource-geoip-cancel" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="cancel" data-core-resource-kind="geoip" value="<%:Cancel update%>" disabled="disabled" />
+          <span id="xc-core-resource-geoip-operation" class="xc-core-resource-operation" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+      <div class="tr" data-core-resource-kind="geosite">
+        <div class="td"><%:GeoSite database%></div>
+        <div class="td"><select id="xc-core-resource-geosite-source" data-core-resource-source="geosite"></select></div>
+        <div class="td" id="xc-core-resource-geosite-status"><%:Unknown%></div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-geosite-current">-</div>
+        <div class="td xc-core-resource-version" id="xc-core-resource-geosite-latest">-</div>
+        <div class="td" id="xc-core-resource-geosite-checkstatus"><%:Unknown%></div>
+        <div class="td xc-core-resource-actions">
+          <input id="xc-core-resource-geosite-check" type="button" class="cbi-button cbi-button-action"
+            data-core-resource-action="update" data-core-resource-kind="geosite" value="<%:Check update%>" />
+          <input id="xc-core-resource-geosite-rollback" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="rollback" data-core-resource-kind="geosite" value="<%:Rollback%>" />
+          <input id="xc-core-resource-geosite-cancel" type="button" class="cbi-button cbi-button-reset"
+            data-core-resource-action="cancel" data-core-resource-kind="geosite" value="<%:Cancel update%>" disabled="disabled" />
+          <span id="xc-core-resource-geosite-operation" class="xc-core-resource-operation" role="status" aria-live="polite"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cbi-section xc-core-proxy-section">
+    <h3><%:Update proxy settings%></h3>
+    <p class="cbi-section-descr"><%:Route core resource downloads through a proxy. The address and port are required when enabled; the username and password are optional. The password is stored in plain text in the device configuration.%></p>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-enabled"><%:Enable%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-proxy-enabled" name="asset_proxy_enabled" type="checkbox" />
+        <div class="cbi-value-description"><%:Use the proxy for Xray core and GeoIP or GeoSite downloads.%></div>
+      </div>
+    </div>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-type"><%:Proxy type%></label>
+      <div class="cbi-value-field">
+        <select id="xc-core-proxy-type">
+          <option value="socks"><%:SOCKS5%></option>
+          <option value="http"><%:HTTP%></option>
+        </select>
+      </div>
+    </div>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-address"><%:Address%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-proxy-address" name="asset_proxy_address" type="text" maxlength="253" placeholder="192.168.6.1" />
+        <div class="cbi-value-description"><%:Proxy host address, either an IP address or a hostname.%></div>
+      </div>
+    </div>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-port"><%:Port%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-proxy-port" name="asset_proxy_port" type="text" inputmode="numeric" maxlength="5" placeholder="7890" />
+      </div>
+    </div>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-username"><%:Username%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-proxy-username" name="asset_proxy_username" type="text" maxlength="128" autocomplete="off" />
+      </div>
+    </div>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-proxy-password"><%:Password%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-proxy-password" name="asset_proxy_password" type="password" maxlength="128" autocomplete="new-password" />
+        <div class="cbi-value-description"><%:Leave empty to keep the saved password.%></div>
+      </div>
+    </div>
+    <div class="cbi-page-actions">
+      <input id="xc-core-proxy-save" type="button" class="cbi-button cbi-button-apply" value="<%:Save & apply%>" />
+      <span id="xc-core-proxy-result" class="xc-core-proxy-result" role="status" aria-live="polite"></span>
+    </div>
+  </div>
+
+  <div class="cbi-section xc-core-upload-section">
+    <h3><%:Upload and validate core%></h3>
+    <div class="cbi-value">
+      <label class="cbi-value-title" for="xc-core-upload-file"><%:Core file%></label>
+      <div class="cbi-value-field">
+        <input id="xc-core-upload-file" name="core_file" type="file" accept="application/octet-stream" />
+        <div class="cbi-value-description"><%:Only a single Xray ELF executable matching this device architecture is accepted.%></div>
+      </div>
+    </div>
+    <div class="xc-core-upload-progress-wrap" role="status" aria-live="polite">
+      <progress id="xc-core-upload-progress" max="100" value="0" hidden="hidden" aria-label="<%:Upload progress%>"></progress>
+      <span id="xc-core-upload-progress-text"></span>
+    </div>
+    <div class="cbi-page-actions">
+      <input id="xc-core-upload" type="button" class="cbi-button cbi-button-action" value="<%:Upload and validate%>" disabled="disabled" />
+    </div>
+  </div>
+
+  <div class="cbi-section xc-core-installed">
+    <h3><%:Installed versions%></h3>
+    <div id="xc-core-versions" class="table xc-core-version-table">
+      <div class="tr table-titles">
+        <div class="th"><%:Version%></div>
+        <div class="th"><%:Architecture%></div>
+        <div class="th"><%:Size%></div>
+        <div class="th"><%:Validation status%></div>
+        <div class="th"><%:Runtime status%></div>
+        <div class="th"><%:Actions%></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="xc-core-operation-state" class="cbi-section xc-core-operation-state" role="status" aria-live="polite"></div>
+</div>
+
+<style type="text/css">
+.xc-core-version-table .td, .xc-core-version-table .th,
+.xc-core-resource-table .td, .xc-core-resource-table .th { vertical-align: middle; }
+.xc-core-version-table .td:nth-child(3), .xc-core-version-table .th:nth-child(3) { text-align: right; white-space: nowrap; }
+.xc-core-version-table .td:nth-child(5), .xc-core-version-table .th:nth-child(5) { white-space: nowrap; }
+.xc-core-version-actions input, .xc-core-resource-actions input { margin: 0 0.25em 0.25em 0; }
+.xc-core-resource-operation { display: inline-block; margin-left: 0.25em; vertical-align: middle; }
+.xc-core-resource-version { white-space: nowrap; }
+.xc-core-resource-state-upgrade { color: #d48806; }
+.xc-core-resource-state-current { color: #278a2a; }
+.xc-core-resource-state-error { color: #c33; }
+.xc-core-resource-state-unknown { color: #777; }
+.xc-core-operation-state:empty { display: none; }
+.xc-core-status-running { color: #278a2a; }
+.xc-core-status-stopped, .xc-core-status-error { color: #c33; }
+.xc-core-status-not-running, .xc-core-status-unknown { color: #777; }
+.xc-core-proxy-result:empty { display: none; }
+.xc-core-proxy-result { color: #278a2a; }
+.xc-core-proxy-result.xc-core-proxy-error { color: #c33; }
+</style>
+
+<script type="text/javascript">
+//<![CDATA[
+(function() {
+  "use strict";
+
+  var page = document.getElementById("xc-core-page");
+  if (!page) return;
+
+  var text = {
+    unavailable: <%=util.serialize_json(translate("Unavailable"))%>,
+    unknown: <%=util.serialize_json(translate("Unknown"))%>,
+    running: <%=util.serialize_json(translate("Running"))%>,
+    stopped: <%=util.serialize_json(translate("Stopped"))%>,
+    notRunning: <%=util.serialize_json(translate("Not running"))%>,
+    error: <%=util.serialize_json(translate("Error"))%>,
+    systemProvided: <%=util.serialize_json(translate("System provided"))%>,
+    current: <%=util.serialize_json(translate("Current"))%>,
+    rollback: <%=util.serialize_json(translate("Rollback"))%>,
+    activate: <%=util.serialize_json(translate("Activate"))%>,
+    remove: <%=util.serialize_json(translate("Delete"))%>,
+    validated: <%=util.serialize_json(translate("Validated"))%>,
+    binaryValidated: <%=util.serialize_json(translate("Binary validated"))%>,
+    fullValidated: <%=util.serialize_json(translate("Configuration validated"))%>,
+    empty: <%=util.serialize_json(translate("No installed core versions"))%>,
+    unavailableAction: <%=util.serialize_json(translate("The interface is not available"))%>,
+    completed: <%=util.serialize_json(translate("Operation completed"))%>,
+    uploaded: <%=util.serialize_json(translate("The core was validated and installed; it can now be activated."))%>,
+    manualUpgrade: <%=util.serialize_json(translate("A version newer than 26.6.27 must be replaced manually; the current core was kept."))%>,
+    assetsMissing: <%=util.serialize_json(translate("GeoIP and GeoSite assets are missing; install or replace them manually."))%>,
+    confirmActivate: <%=util.serialize_json(translate("Confirm activation of this Xray core? The service may restart."))%>,
+    confirmRollback: <%=util.serialize_json(translate("Confirm Xray core rollback? The service may restart."))%>,
+    confirmRemove: <%=util.serialize_json(translate("Confirm deletion of this inactive Xray core?"))%>,
+    resourceDefault: <%=util.serialize_json(translate("Default snapshot available"))%>,
+    resourceNoDefault: <%=util.serialize_json(translate("No default snapshot"))%>,
+    checking: <%=util.serialize_json(translate("Checking for updates"))%>,
+    detected: <%=util.serialize_json(translate("Detected new version"))%>,
+    checkUpdate: <%=util.serialize_json(translate("Check update"))%>,
+    update: <%=util.serialize_json(translate("Update"))%>,
+    upgradeAvailable: <%=util.serialize_json(translate("Upgrade available"))%>,
+    upToDate: <%=util.serialize_json(translate("Already up to date"))%>,
+    downloading: <%=util.serialize_json(translate("Downloading"))%>,
+    installing: <%=util.serialize_json(translate("Download complete; installing"))%>,
+    updateComplete: <%=util.serialize_json(translate("Update complete"))%>,
+    unchanged: <%=util.serialize_json(translate("Latest version already installed"))%>,
+    updateFailed: <%=util.serialize_json(translate("Update failed"))%>,
+    checkFailed: <%=util.serialize_json(translate("Check failed"))%>,
+    downloadFailed: <%=util.serialize_json(translate("Download failed"))%>,
+    installFailed: <%=util.serialize_json(translate("Installation failed"))%>,
+    commitFailed: <%=util.serialize_json(translate("Source selection save failed"))%>,
+    interrupted: <%=util.serialize_json(translate("Update interrupted"))%>,
+    downloaded: <%=util.serialize_json(translate("Downloaded"))%>,
+    cancelled: <%=util.serialize_json(translate("Update cancelled"))%>,
+    updateBusy: <%=util.serialize_json(translate("Another core resource update is already in progress."))%>,
+    proxyApplied: <%=util.serialize_json(translate("The update proxy settings were applied."))%>,
+    proxySaveFailed: <%=util.serialize_json(translate("The update proxy settings could not be saved."))%>,
+    proxyInvalid: <%=util.serialize_json(translate("The update proxy settings are invalid."))%>,
+    proxyAddressRequired: <%=util.serialize_json(translate("The update proxy address is required when the proxy is enabled."))%>,
+    proxyPortInvalid: <%=util.serialize_json(translate("The update proxy port must be between 1 and 65535."))%>,
+    proxyPasswordSet: <%=util.serialize_json(translate("A password is saved; leave the field empty to keep it."))%>
+  };
+
+  var elements = {
+    file: document.getElementById("xc-core-upload-file"),
+    progress: document.getElementById("xc-core-upload-progress"),
+    progressText: document.getElementById("xc-core-upload-progress-text"),
+    upload: document.getElementById("xc-core-upload"),
+    versions: document.getElementById("xc-core-versions"),
+    operation: document.getElementById("xc-core-operation-state"),
+    proxy: {
+      enabled: document.getElementById("xc-core-proxy-enabled"),
+      type: document.getElementById("xc-core-proxy-type"),
+      address: document.getElementById("xc-core-proxy-address"),
+      port: document.getElementById("xc-core-proxy-port"),
+      username: document.getElementById("xc-core-proxy-username"),
+      password: document.getElementById("xc-core-proxy-password"),
+      save: document.getElementById("xc-core-proxy-save"),
+      result: document.getElementById("xc-core-proxy-result")
+    },
+    resources: {}
+  };
+  ["xray", "geoip", "geosite"].forEach(function(kind) {
+    elements.resources[kind] = {
+      source: document.getElementById("xc-core-resource-" + kind + "-source"),
+      status: document.getElementById("xc-core-resource-" + kind + "-status"),
+      current: document.getElementById("xc-core-resource-" + kind + "-current"),
+      latest: document.getElementById("xc-core-resource-" + kind + "-latest"),
+      checkStatus: document.getElementById("xc-core-resource-" + kind + "-checkstatus"),
+      check: document.getElementById("xc-core-resource-" + kind + "-check"),
+      rollback: document.getElementById("xc-core-resource-" + kind + "-rollback"),
+      cancel: document.getElementById("xc-core-resource-" + kind + "-cancel"),
+      jobId: null,
+      canUpgrade: false,
+      operation: document.getElementById("xc-core-resource-" + kind + "-operation")
+    };
+  });
+
+  function safeId(value) { return typeof value === "string" && value.length <= 128 && /^[a-z0-9][a-z0-9_%-]*$/.test(value); }
+  function safeVersion(value) { return typeof value === "string" && value.length <= 64 && /^[a-z0-9][a-z0-9_.%-]*$/.test(value); }
+  function safeArch(value) { return typeof value === "string" && value.length <= 32 && /^[a-z0-9_]+$/.test(value); }
+  function safeHash(value) { return typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value); }
+  function safeSource(value) { return typeof value === "string" && value.length <= 32 && /^[a-z][a-z0-9_-]*$/.test(value); }
+  function safeJobId(value) { return typeof value === "string" && value.length <= 64 && /^[0-9][0-9%-]*$/.test(value); }
+  function setText(element, value) { if (element) element.textContent = value; }
+  function clear(element) { while (element && element.firstChild) element.removeChild(element.firstChild); }
+
+  function request(method, url, body, callback, progressCallback) {
+    if (typeof XMLHttpRequest !== "function") { unavailable(); return; }
+    var xhr = new XMLHttpRequest();
+    if (xhr.upload && typeof progressCallback === "function") {
+      xhr.upload.onprogress = function(event) {
+        if (event && event.lengthComputable) progressCallback(event.loaded, event.total);
+      };
+    }
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      var payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch (ignored) {}
+      callback(payload && typeof payload === "object" ? payload : null);
+    };
+    xhr.open(method, url + (url.indexOf("?") >= 0 ? "&" : "?") + "token=" + encodeURIComponent(page.getAttribute("data-core-token") || ""), true);
+    if (typeof body === "string") xhr.setRequestHeader("Content-Type", "application/x-www-form-urlencoded");
+    xhr.send(body || null);
+  }
+
+  function unavailable() { setText(elements.operation, text.unavailableAction); }
+
+  function validationText(value) {
+    if (value === "full") return text.fullValidated;
+    if (value === "binary") return text.binaryValidated;
+    return text.validated;
+  }
+
+  function runtimeText(version, marker, service) {
+    if (version.id !== marker) return text.notRunning;
+    if (service === "running") return text.running;
+    if (service === "stopped") return text.stopped;
+    if (service === "error") return text.error;
+    return text.unknown;
+  }
+
+  function runtimeClass(value) {
+    if (value === text.running) return "xc-core-status-running";
+    if (value === text.stopped || value === text.error) return "xc-core-status-error";
+    if (value === text.notRunning) return "xc-core-status-not-running";
+    return "xc-core-status-unknown";
+  }
+
+  function formatSize(value) {
+    if (typeof value !== "number" || !isFinite(value) || value < 0) return text.unavailable;
+    if (value < 1024) return String(Math.floor(value)) + " B";
+    if (value < 1024 * 1024) return (value / 1024).toFixed(1) + " KiB";
+    return (value / (1024 * 1024)).toFixed(1) + " MiB";
+  }
+
+  function cell(row, value, className) {
+    var item = document.createElement("div");
+    item.className = "td" + (className ? " " + className : "");
+    item.textContent = value;
+    row.appendChild(item);
+    return item;
+  }
+
+  function validVersion(value) {
+    return value && typeof value === "object" && safeId(value.id) && safeVersion(value.version) &&
+      safeArch(value.arch) && safeHash(value.sha256) && typeof value.size === "number" &&
+      isFinite(value.size) && Math.floor(value.size) === value.size && value.size >= 0 &&
+      value.size <= 67108864 && (!value.validation || value.validation === "binary" || value.validation === "full");
+  }
+
+  function actionButton(action, id, label, disabled, confirmation) {
+    var button = document.createElement("input");
+    button.type = "button";
+    button.className = "cbi-button cbi-button-action";
+    button.value = label;
+    button.setAttribute("data-core-action", action);
+    button.setAttribute("data-core-id", id);
+    button.disabled = disabled === true;
+    button.onclick = function() {
+      if (button.disabled || !confirm(confirmation)) return;
+      var route = action === "delete" ? "delete" : action;
+      request("POST", page.getAttribute("data-core-" + route + "-url"), "id=" + encodeURIComponent(id), function(payload) {
+        if (!payload || payload.ok !== true) { setText(elements.operation, payload && payload.message ? payload.message : text.unavailableAction); return; }
+        setText(elements.operation, text.completed);
+        loadStatus();
+      });
+    };
+    return button;
+  }
+
+  function removeVersionRows() {
+    if (!elements.versions) return;
+    var children = [];
+    for (var index = 0; index < elements.versions.children.length; index++) children.push(elements.versions.children[index]);
+    children.forEach(function(child) {
+      if (child.getAttribute && child.getAttribute("data-core-version-row") === "1") elements.versions.removeChild(child);
+    });
+  }
+
+  function renderVersions(values, marker, service, currentInfo) {
+    removeVersionRows();
+    var count = 0;
+    if (marker === "system" && currentInfo && safeVersion(currentInfo.version) && safeArch(currentInfo.arch)) {
+      var system = { id: "system", version: currentInfo.version, arch: currentInfo.arch, size: currentInfo.size };
+      appendVersion(system, marker, service, true);
+      count++;
+    }
+    if (Array.isArray(values)) values.forEach(function(version) {
+      if (!validVersion(version)) return;
+      appendVersion(version, marker, service, false);
+      count++;
+    });
+    if (count === 0) {
+      var empty = document.createElement("div");
+      empty.className = "tr xc-core-version-empty";
+      empty.setAttribute("data-core-version-row", "1");
+      empty.appendChild(cell(empty, text.empty));
+      elements.versions.appendChild(empty);
+    }
+  }
+
+  function appendVersion(version, marker, service, system) {
+    var row = document.createElement("div");
+    row.className = "tr" + (version.id === marker ? " xc-core-version-current" : "");
+    row.setAttribute("data-core-version-row", "1");
+    row.setAttribute("data-core-id", version.id);
+    cell(row, system ? "系统核心 " + version.version : version.version);
+    cell(row, version.arch);
+    cell(row, formatSize(version.size));
+    cell(row, system ? text.systemProvided : version.id === marker ? text.current : version.previous === true ? text.rollback : validationText(version.validation));
+    cell(row, runtimeText(version, marker, service), "xc-core-version-runtime " + runtimeClass(runtimeText(version, marker, service)));
+    var actions = document.createElement("div");
+    actions.className = "td xc-core-version-actions";
+    if (!system && version.current === true) actions.appendChild(actionButton("current", version.id, text.current, true, ""));
+    else if (!system && version.previous === true) actions.appendChild(actionButton("rollback", version.id, text.rollback, false, text.confirmRollback));
+    else if (!system) {
+      actions.appendChild(actionButton("activate", version.id, text.activate, false, text.confirmActivate));
+      actions.appendChild(actionButton("delete", version.id, text.remove, false, text.confirmRemove));
+    }
+    row.appendChild(actions);
+    elements.versions.appendChild(row);
+  }
+
+  function renderResources(resources) {
+    resources = resources && typeof resources === "object" ? resources : {};
+    var sourceSets = resources.sources && typeof resources.sources === "object" ? resources.sources : {};
+    var selected = resources.selected && typeof resources.selected === "object" ? resources.selected : {};
+    var defaults = resources.defaults && typeof resources.defaults === "object" ? resources.defaults : {};
+    ["xray", "geoip", "geosite"].forEach(function(kind) {
+      var item = elements.resources[kind];
+      if (!item || !item.source) return;
+      clear(item.source);
+      var chosen = null;
+      var values = Array.isArray(sourceSets[kind]) ? sourceSets[kind] : [];
+      values.forEach(function(source) {
+        if (!source || !safeSource(source.id) || typeof source.label !== "string" || source.label.length > 128) return;
+        var option = document.createElement("option");
+        option.value = source.id;
+        option.textContent = source.label;
+        item.source.appendChild(option);
+        if (source.id === selected[kind]) chosen = source.id;
+      });
+      if (chosen === null && item.source.children.length > 0) chosen = item.source.children[0].value;
+      item.source.value = chosen || "";
+      setText(item.status, defaults[kind] === true ? text.resourceDefault : kind === "xray" || defaults[kind] === false ? text.resourceNoDefault : text.unknown);
+      setText(item.current, "-");
+      setText(item.latest, "-");
+      setText(item.checkStatus, text.unknown);
+      resourceCheckState(kind, "unknown");
+      item.canUpgrade = false;
+      if (item.check) item.check.value = text.checkUpdate;
+      setResourceBusy(false);
+    });
+  }
+
+  function safeVersion(value) { return typeof value === "string" && value.length > 0 && value.length <= 128 && !/[\u0000-\u001f]/.test(value); }
+
+  function resourceCheckState(kind, css) {
+    var cell = elements.resources[kind] && elements.resources[kind].checkStatus;
+    if (cell) cell.className = "td xc-core-resource-state-" + (css || "unknown");
+  }
+
+  function resourceCheck(kind, silent) {
+    var item = elements.resources[kind];
+    if (!item || !item.check || item.check.disabled) return;
+    item.canUpgrade = false;
+    setResourceBusy(true);
+    if (!silent) {
+      resourceCheckState(kind, "unknown");
+      setText(item.checkStatus, text.checking);
+      setText(item.operation, "");
+    }
+    var base = page.getAttribute("data-core-resource-check-url");
+    request("GET", base + (base.indexOf("?") >= 0 ? "&" : "?") +
+      "kind=" + encodeURIComponent(kind) + "&source=" + encodeURIComponent(item.source.value || "official"), null, function(payload) {
+      var data = payload && payload.ok === true ? payload.data : null;
+      if (!data) {
+        item.canUpgrade = false;
+        if (!silent) {
+          setText(item.checkStatus, text.checkFailed);
+          resourceCheckState(kind, "error");
+          setText(item.operation, text.unavailableAction);
+        }
+        setResourceBusy(false);
+        return;
+      }
+      setText(item.current, safeVersion(data.current_version) ? data.current_version : "-");
+      setText(item.latest, safeVersion(data.latest_version) ? data.latest_version : "-");
+      if (data.error) {
+        item.canUpgrade = false;
+        if (!silent) {
+          setText(item.checkStatus, text.checkFailed);
+          resourceCheckState(kind, "error");
+        }
+      } else if (data.can_upgrade === true) {
+        item.canUpgrade = true;
+        if (!silent) {
+          setText(item.checkStatus, text.upgradeAvailable);
+          resourceCheckState(kind, "upgrade");
+        }
+      } else {
+        item.canUpgrade = false;
+        if (!silent) {
+          setText(item.checkStatus, text.upToDate);
+          resourceCheckState(kind, "current");
+        }
+      }
+      // 统一动作按钮：常态为「检查更新」，发现新版本时切换为「更新」。
+      if (item.check) item.check.value = item.canUpgrade ? text.update : text.checkUpdate;
+      setResourceBusy(false);
+    });
+  }
+
+  function renderStatus(payload) {
+    payload = payload && typeof payload === "object" ? payload : {};
+    var currentInfo = payload.current_info && typeof payload.current_info === "object" ? payload.current_info : {};
+    var marker = typeof payload.current === "string" ? payload.current : "system";
+    renderResources(payload.resources);
+    renderProxySettings(payload.resources);
+    renderVersions(payload.versions, marker, payload.status, currentInfo);
+    if (payload.manual_upgrade === true) setText(elements.operation, text.manualUpgrade);
+    else if (payload.resources && payload.resources.ready !== true) setText(elements.operation, text.assetsMissing);
+  }
+
+  function renderProxySettings(resources) {
+    var proxy = resources && resources.proxy && typeof resources.proxy === "object" ? resources.proxy : null;
+    var p = elements.proxy;
+    if (!proxy || !p.enabled) return;
+    p.enabled.checked = proxy.enabled === true;
+    p.type.value = proxy.type === "http" ? "http" : "socks";
+    p.address.value = typeof proxy.address === "string" ? proxy.address : "";
+    p.port.value = typeof proxy.port === "string" ? proxy.port : "";
+    p.username.value = typeof proxy.username === "string" ? proxy.username : "";
+    p.password.value = "";
+    p.password.placeholder = proxy.has_password === true ? text.proxyPasswordSet : "";
+  }
+
+  function saveProxySettings() {
+    var p = elements.proxy;
+    if (!p.save || !p.enabled) return;
+    p.save.disabled = true;
+    setText(p.result, "");
+    p.result.className = "xc-core-proxy-result";
+    var payload = {
+      enabled: p.enabled.checked,
+      type: p.type.value === "http" ? "http" : "socks",
+      address: p.address.value,
+      port: p.port.value,
+      username: p.username.value,
+      password: p.password.value
+    };
+    var xhr = new XMLHttpRequest();
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      p.save.disabled = false;
+      var response = null;
+      try { response = JSON.parse(xhr.responseText); } catch (ignored) {}
+      if (response && response.ok === true) {
+        setText(p.result, text.proxyApplied);
+        p.result.className = "xc-core-proxy-result";
+        loadStatus();
+      } else {
+        var code = response && typeof response.code === "string" ? response.code : "";
+        var message = text.proxySaveFailed;
+        if (code === "asset_proxy_address_required") message = text.proxyAddressRequired;
+        else if (code === "asset_proxy_port_invalid") message = text.proxyPortInvalid;
+        else if (code === "asset_proxy_invalid") message = text.proxyInvalid;
+        else if (code === "asset_commit_failed") message = text.commitFailed;
+        setText(p.result, message);
+        p.result.className = "xc-core-proxy-result xc-core-proxy-error";
+      }
+    };
+    xhr.open("POST", page.getAttribute("data-asset-proxy-apply-url") + "?token=" + encodeURIComponent(page.getAttribute("data-core-token") || ""), true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.send(JSON.stringify(payload));
+  }
+
+  function resourceText(payload) {
+    if (payload.stage === "checking") return text.checking;
+    if (payload.stage === "downloading") {
+      var total = Number(payload.total_bytes) || 0;
+      var loaded = Number(payload.downloaded_bytes) || 0;
+      var percent = total > 0 ? Math.max(0, Math.min(99, Math.round(loaded * 100 / total))) : 0;
+      return text.downloading + "【" + percent + "%】";
+    }
+    if (payload.stage === "installing") return text.installing;
+    if (payload.stage === "unchanged") return text.unchanged;
+    if (payload.stage === "succeeded") return text.updateComplete + "【100%】";
+    if (payload.stage === "cancelled") return text.cancelled;
+    if (payload.stage === "failed") {
+      if (payload.code === "asset_update_busy") return text.updateBusy;
+      var reason = text.checkFailed;
+      if (payload.code === "asset_download_failed") reason = text.downloadFailed;
+      else if (payload.code === "asset_install_failed") reason = text.installFailed;
+      else if (payload.code === "asset_commit_failed") reason = text.commitFailed;
+      else if (payload.code === "asset_update_interrupted") reason = text.interrupted;
+      return text.updateFailed + "：" + reason;
+    }
+    return "";
+  }
+
+  function renderResourceJob(payload) {
+    if (!payload || !elements.resources[payload.kind]) return;
+    var item = elements.resources[payload.kind];
+    if (payload.job_id) item.jobId = safeJobId(payload.job_id) ? payload.job_id : null;
+    setText(item.operation, resourceText(payload));
+    if (payload.active === true) setResourceBusy(true, payload.kind);
+    else if (payload.stage === "succeeded" || payload.stage === "unchanged" || payload.stage === "failed" || payload.stage === "cancelled") setResourceBusy(false);
+  }
+
+  function setResourceBusy(value, activeKind) {
+    ["xray", "geoip", "geosite"].forEach(function(kind) {
+      var item = elements.resources[kind];
+      if (!item) return;
+      item.source.disabled = value;
+      item.check.disabled = value;
+      item.rollback.disabled = value;
+      item.cancel.disabled = !value || kind !== activeKind || !item.jobId;
+    });
+  }
+
+  function pollResourceJob(initialLoad) {
+    request("GET", page.getAttribute("data-core-resource-update-status-url"), null, function(payload) {
+      var data = payload && payload.ok === true ? payload.data : null;
+      if (!data || data.active !== true && !data.kind) { setResourceBusy(false); return; }
+      if (initialLoad && data.active !== true) {
+        if (elements.resources[data.kind]) setText(elements.resources[data.kind].operation, "");
+        setResourceBusy(false);
+        return;
+      }
+      renderResourceJob(data);
+      if (data.active === true) {
+        if (typeof setTimeout === "function") setTimeout(function() { pollResourceJob(false); }, 1000);
+      } else {
+        setResourceBusy(false);
+        loadStatus();
+        if (data.kind) resourceCheck(data.kind, true);
+      }
+    });
+  }
+
+  function loadStatus() {
+    request("GET", page.getAttribute("data-core-status-url"), null, function(payload) {
+      if (!payload || payload.ok !== true || !payload.data) { unavailable(); return; }
+      renderStatus(payload.data);
+    });
+  }
+
+  function resourceRequest(kind, action) {
+    var item = elements.resources[kind];
+    if (!item || !item.source || !item.check || !item.rollback) return;
+    setResourceBusy(true);
+    var body = "kind=" + encodeURIComponent(kind);
+    if (action === "update") body += "&source=" + encodeURIComponent(item.source.value || "official");
+    var url = page.getAttribute("data-core-resource-" + action + "-url");
+    request("POST", url, body, function(payload) {
+      if (!payload || payload.ok !== true) {
+        setResourceBusy(false);
+        renderResourceJob({ kind: kind, stage: "failed", code: payload && payload.code ? payload.code : "asset_runtime_unavailable" });
+        return;
+      }
+      if (action === "update") {
+        renderResourceJob({ kind: kind, stage: "checking" });
+        pollResourceJob();
+      } else {
+        setResourceBusy(false);
+        renderResourceJob({ kind: kind, stage: "succeeded" });
+        loadStatus();
+      }
+    });
+  }
+
+  function resourceCancel(kind) {
+    var item = elements.resources[kind];
+    if (!item || !item.jobId) return;
+    setResourceBusy(true, kind);
+    var url = page.getAttribute("data-core-resource-cancel-url");
+    request("POST", url, "job_id=" + encodeURIComponent(item.jobId), function(payload) {
+      if (!payload || payload.ok !== true) {
+        renderResourceJob({ kind: kind, stage: "failed", code: payload && payload.code ? payload.code : "asset_runtime_unavailable" });
+        return;
+      }
+      pollResourceJob(false);
+    });
+  }
+
+  function updateUploadState() { elements.upload.disabled = !(elements.file && elements.file.files && elements.file.files.length > 0); }
+  function setUploadProgress(loaded, total) {
+    if (!elements.progress || !elements.progressText) return;
+    if (!total || total < 1) { elements.progress.hidden = true; elements.progressText.textContent = ""; return; }
+    var percent = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+    elements.progress.hidden = false;
+    elements.progress.value = percent;
+    elements.progressText.textContent = percent + "%";
+  }
+
+  ["xray", "geoip", "geosite"].forEach(function(kind) {
+    var item = elements.resources[kind];
+    if (item.check) item.check.onclick = function() {
+      if (item.canUpgrade) resourceRequest(kind, "update");
+      else resourceCheck(kind);
+    };
+    if (item.rollback) item.rollback.onclick = function() { resourceRequest(kind, "rollback"); };
+    if (item.cancel) item.cancel.onclick = function() { resourceCancel(kind); };
+    if (item.source) item.source.onchange = function() {
+      setText(item.current, "-");
+      setText(item.latest, "-");
+      setText(item.checkStatus, text.unknown);
+      resourceCheckState(kind, "unknown");
+      item.canUpgrade = false;
+      if (item.check) item.check.value = text.checkUpdate;
+      setResourceBusy(false);
+    };
+  });
+  if (elements.proxy.save) elements.proxy.save.onclick = saveProxySettings;
+  elements.file.onchange = updateUploadState;
+  elements.upload.onclick = function() {
+    if (elements.upload.disabled || typeof XMLHttpRequest !== "function" || typeof FormData !== "function") { unavailable(); return; }
+    var form = new FormData();
+    form.append("core_file", elements.file.files[0]);
+    setUploadProgress(0, elements.file.files[0].size || 0);
+    elements.upload.disabled = true;
+    request("POST", page.getAttribute("data-core-upload-url"), form, function(payload) {
+      setUploadProgress(0, 0);
+      elements.upload.disabled = false;
+      if (!payload || payload.ok !== true) { setText(elements.operation, payload && payload.message ? payload.message : text.unavailableAction); return; }
+      setText(elements.operation, text.uploaded);
+      elements.file.value = "";
+      updateUploadState();
+      loadStatus();
+    }, setUploadProgress);
+  };
+  updateUploadState();
+  loadStatus();
+  pollResourceJob(true);
+
+  window.XCCoreUI = {
+    endpoints: {
+      status: page.getAttribute("data-core-status-url"), updateStatus: page.getAttribute("data-core-resource-update-status-url"),
+      cancel: page.getAttribute("data-core-resource-cancel-url"),
+      upload: page.getAttribute("data-core-upload-url"), activate: page.getAttribute("data-core-activate-url"),
+      rollback: page.getAttribute("data-core-rollback-url"), remove: page.getAttribute("data-core-delete-url")
+    },
+    renderStatus: renderStatus, renderVersions: renderVersions, renderResources: renderResources, renderResourceJob: renderResourceJob
+  };
+}());
+//]]>
+</script>

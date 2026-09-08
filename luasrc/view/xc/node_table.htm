@@ -1,0 +1,294 @@
+<%
+local dispatcher = require "luci.dispatcher"
+local util = require "luci.util"
+local probe_concurrency = self.probe_concurrency or 3
+-%>
+<%+cbi/tblsection%>
+<div id="xc-node-controls" class="cbi-section-create">
+  <input id="xc-probe-all" class="cbi-button cbi-button-apply" type="button" value="<%:Test all%>" />
+  <input id="xc-probe-stop" class="cbi-button cbi-button-reset" type="button" value="<%:Stop testing%>" />
+  <span id="xc-probe-state"></span>
+  <span id="xc-switch-state"></span>
+</div>
+<style type="text/css">
+  #xc-node-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4em; }
+  .xc-probe-row .cbi-section-actions > div { display: flex; align-items: center; flex-wrap: nowrap; gap: 0.3em; }
+  .xc-probe-row .xc-socket { display: inline-block; margin-right: 0.3em; }
+  .xc-probe-row .xc-probe-one, .xc-probe-row .xc-fast-switch-one { font-size: smaller; padding: 0.15em 0.5em; }
+  .xc-node-active { box-shadow: inset 0.3em 0 0 #37a169; }
+  .xc-node-active > .td { background-color: rgba(55, 161, 105, 0.12); }
+  @media (max-width: 768px) {
+    .xc-probe-row .cbi-section-actions > div { flex-wrap: wrap; }
+  }
+</style>
+<script type="text/javascript">
+(function() {
+  "use strict";
+  var endpoint = '<%=dispatcher.build_url("admin", "services", "xc", "probe")%>?token=<%=token%>';
+  var fastSwitchEndpoint = '<%=dispatcher.build_url("admin", "services", "xc", "fast-switch")%>?token=<%=token%>';
+  var statusEndpoint = '<%=dispatcher.build_url("admin", "services", "xc", "status")%>';
+  var activeSection = <%=util.serialize_json(self.active_section or "")%>;
+  var configured = Number("<%=probe_concurrency%>");
+  var concurrency = isFinite(configured) ? Math.min(5, Math.max(1, Math.floor(configured))) : 3;
+  var errorText = <%=util.serialize_json(translate("Error"))%>;
+  var failText = <%=util.serialize_json(translate("Failed"))%>;
+  var timeoutText = <%=util.serialize_json(translate("Timed out"))%>;
+  var testingText = <%=util.serialize_json(translate("Testing…"))%>;
+  var stoppedText = <%=util.serialize_json(translate("Stopped"))%>;
+  var probeText = <%=util.serialize_json(translate("Test"))%>;
+  var fastSwitchText = <%=util.serialize_json(translate("Fast switch"))%>;
+  var currentText = <%=util.serialize_json(translate("Current"))%>;
+  var fastSwitchingText = <%=util.serialize_json(translate("Fast switching…"))%>;
+  var fastSwitchTargetInvalidText = <%=util.serialize_json(translate("Fast switch target is not applied; save and apply it in Settings first."))%>;
+  var fastSwitchedText = <%=util.serialize_json(translate("Fast switched"))%>;
+  var fastSwitchFailedText = <%=util.serialize_json(translate("Fast switch failed"))%>;
+  var rows = [], queue = [], inFlight = 0, runId = 0, running = false;
+  var allButton, stopButton, state, switchState;
+  var fastSwitching = false, fastSwitchGeneration = 0, fastSwitchRequest = null;
+
+  function color(milliseconds) {
+    if (milliseconds < 100) return "green";
+    if (milliseconds < 200) return "#b7791f";
+    if (milliseconds < 300) return "#dd6b20";
+    return "red";
+  }
+
+  function finish() {
+    if (inFlight > 0) inFlight--;
+    if (!running) return;
+    pump(runId);
+    if (queue.length === 0 && inFlight === 0) {
+      running = false;
+      allButton.disabled = false;
+      state.textContent = "";
+    }
+  }
+
+  function render(row, payload) {
+    var latency = row.querySelector(".xc-latency");
+    var socket = row.querySelector(".xc-socket");
+    if (!payload || payload.ok !== true || !payload.data) {
+      if (latency) { latency.textContent = errorText; latency.style.color = "red"; }
+      if (socket) { socket.textContent = failText; socket.style.color = "red"; }
+      return;
+    }
+    var data = payload.data;
+    var milliseconds = Number(data.ping);
+    var text = "";
+    if (data.outcome === "timeout") text = timeoutText;
+    else if (data.socket === "ok" && isFinite(milliseconds) && milliseconds >= 0 && milliseconds < 1) text = "<1 ms";
+    else if (!isFinite(milliseconds) || milliseconds <= 0) text = errorText;
+    else text = Math.floor(milliseconds) + " ms";
+    if (latency) { latency.textContent = text; latency.style.color = color(isFinite(milliseconds) ? milliseconds : 10000); }
+    if (socket) {
+      socket.textContent = data.socket === "ok" ? "✓" : "✗";
+      socket.style.color = data.socket === "ok" ? "green" : "red";
+    }
+  }
+
+  function request(row, id) {
+    var xhr = new XMLHttpRequest();
+    var section = row.getAttribute("data-xc-section");
+    var settled = false;
+    function complete(payload) {
+      if (settled) return;
+      settled = true;
+      if (id === runId) render(row, payload);
+      finish();
+    }
+    xhr.open("POST", endpoint, true);
+    xhr.timeout = 12000;
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      var payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch (ignored) {}
+      complete(payload);
+    };
+    xhr.onerror = function() { complete(null); };
+    xhr.ontimeout = function() { complete(null); };
+    xhr.send(JSON.stringify({ section: section }));
+  }
+
+  function pump(id) {
+    if (!running || id !== runId) return;
+    while (inFlight < concurrency && queue.length > 0) {
+      var row = queue.shift(); inFlight++; request(row, id);
+    }
+  }
+
+  function start(selected) {
+    if (running || selected.length === 0) return false;
+    runId++; running = true; queue = selected.slice(0);
+    allButton.disabled = true; state.textContent = testingText;
+    pump(runId); return true;
+  }
+
+  function stop() {
+    runId++; queue = []; running = false;
+    allButton.disabled = false; state.textContent = stoppedText;
+  }
+
+  function setActive(section) {
+    activeSection = section;
+    for (var index = 0; index < rows.length; index++) {
+      var row = rows[index];
+      var active = row.getAttribute("data-xc-section") === activeSection;
+      if (row.classList) {
+        if (active) row.classList.add("xc-node-active");
+        else row.classList.remove("xc-node-active");
+      }
+      var fastButton = row.querySelector(".xc-fast-switch-one");
+      if (fastButton) {
+        fastButton.value = active ? currentText : fastSwitchText;
+        fastButton.disabled = fastSwitching || active;
+      }
+    }
+  }
+
+  function refreshActive(generation) {
+    var xhr = new XMLHttpRequest();
+    var settled = false;
+    function complete(payload) {
+      if (settled) return;
+      settled = true;
+      if (generation !== fastSwitchGeneration || !payload || payload.ok !== true || !payload.data) return;
+      setActive(payload.data.active_section || null);
+    }
+    var separator = statusEndpoint.indexOf("?") === -1 ? "?" : "&";
+    xhr.open("GET", statusEndpoint + separator + "_=" + String(Date.now()), true);
+    xhr.timeout = 12000;
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      var payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch (ignored) {}
+      complete(payload);
+    };
+    xhr.onerror = function() { complete(null); };
+    xhr.ontimeout = function() { complete(null); };
+    xhr.send(null);
+  }
+
+  function finishFastSwitch(generation, succeeded, section, code) {
+    if (generation !== fastSwitchGeneration) return;
+    fastSwitching = false;
+    fastSwitchRequest = null;
+    if (succeeded && section) {
+      setActive(section);
+      switchState.textContent = fastSwitchedText;
+      refreshActive(generation);
+    } else {
+      setActive(activeSection);
+      switchState.textContent = code === "fast_switch_target_invalid" ? fastSwitchTargetInvalidText : fastSwitchFailedText;
+    }
+  }
+
+  function fastSwitchNode(row) {
+    if (fastSwitching) return;
+    var section = row.getAttribute("data-xc-section");
+    if (!section || section === activeSection) return;
+    var generation = ++fastSwitchGeneration;
+    fastSwitching = true;
+    fastSwitchRequest = null;
+    switchState.textContent = fastSwitchingText;
+    setActive(activeSection);
+    var selected = row.querySelector(".xc-fast-switch-one");
+    if (selected) selected.value = fastSwitchingText;
+    var xhr = new XMLHttpRequest();
+    fastSwitchRequest = xhr;
+    xhr.open("POST", fastSwitchEndpoint, true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.timeout = 12000;
+    var settled = false;
+    function complete(payload) {
+      if (settled) return;
+      settled = true;
+      if (fastSwitchRequest === xhr) fastSwitchRequest = null;
+      if (generation !== fastSwitchGeneration) return;
+      if (payload && payload.ok === true && payload.data && payload.data.code === "fast_switched")
+        finishFastSwitch(generation, true, section);
+      else finishFastSwitch(generation, false, null, payload && payload.code);
+    }
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      var payload = null;
+      try { payload = JSON.parse(xhr.responseText); } catch (ignored) {}
+      complete(payload);
+    };
+    xhr.onerror = function() { complete(null); };
+    xhr.ontimeout = function() { complete(null); };
+    xhr.send(JSON.stringify({ section: section }));
+  }
+
+  function initialize() {
+    var found = document.querySelectorAll('.cbi-section-table-row[id^="cbi-xc-"]');
+    rows = [];
+    for (var index = 0; index < found.length; index++) {
+      var row = found[index];
+      var match = /^cbi-xc-([A-Za-z0-9_]+)$/.exec(row.id || "");
+      var actions = row.querySelector(".cbi-section-actions > div");
+      if (!match || !actions) continue;
+      if (row.classList) row.classList.add("xc-probe-row");
+      else if (!(new RegExp("(^|\\s)xc-probe-row(\\s|$)")).test(row.className || ""))
+        row.className += (row.className ? " " : "") + "xc-probe-row";
+      row.setAttribute("data-xc-section", match[1]);
+      var buttons = actions.querySelectorAll(".xc-probe-one");
+      var fastSwitchButtons = actions.querySelectorAll(".xc-fast-switch-one");
+      var sockets = actions.querySelectorAll(".xc-socket");
+      var button = buttons[0] || null;
+      var fastSwitchButton = fastSwitchButtons[0] || null;
+      var socket = sockets[0] || null;
+      for (var buttonIndex = 0; buttonIndex < buttons.length; buttonIndex++)
+        if (buttons[buttonIndex].parentNode === actions) actions.removeChild(buttons[buttonIndex]);
+      for (var fastSwitchIndex = 0; fastSwitchIndex < fastSwitchButtons.length; fastSwitchIndex++)
+        if (fastSwitchButtons[fastSwitchIndex].parentNode === actions) actions.removeChild(fastSwitchButtons[fastSwitchIndex]);
+      for (var socketIndex = 0; socketIndex < sockets.length; socketIndex++)
+        if (sockets[socketIndex].parentNode === actions) actions.removeChild(sockets[socketIndex]);
+      if (!socket) {
+        var latency = row.querySelector(".xc-latency");
+        var cachedSocket = latency ? latency.getAttribute("data-xc-socket") : "";
+        socket = document.createElement("span");
+        socket.className = "xc-socket";
+        socket.textContent = cachedSocket === "ok" ? "✓" : (cachedSocket === "fail" ? "✗" : "");
+        socket.style.color = cachedSocket === "ok" ? "green" : (cachedSocket === "fail" ? "red" : "");
+      }
+      if (!button) {
+        button = document.createElement("input");
+        button.type = "button";
+        button.className = "cbi-button cbi-button-action xc-probe-one";
+        button.value = probeText;
+      }
+      if (!fastSwitchButton) {
+        fastSwitchButton = document.createElement("input");
+        fastSwitchButton.type = "button";
+        fastSwitchButton.className = "cbi-button cbi-button-action xc-fast-switch-one";
+        fastSwitchButton.value = fastSwitchText;
+      }
+      var firstAction = actions.children[0] || null;
+      actions.insertBefore(socket, firstAction);
+      actions.insertBefore(button, firstAction);
+      actions.insertBefore(fastSwitchButton, firstAction);
+      rows.push(row);
+    }
+    allButton = document.getElementById("xc-probe-all");
+    stopButton = document.getElementById("xc-probe-stop");
+    state = document.getElementById("xc-probe-state");
+    switchState = document.getElementById("xc-switch-state");
+    var controls = document.getElementById("xc-node-controls");
+    var addButtons = document.querySelectorAll("input.cbi-button-add");
+    if (controls && addButtons.length > 0 && addButtons[0].parentNode !== controls)
+      controls.insertBefore(addButtons[0], controls.children[0] || null);
+    allButton.onclick = function() { start(rows); };
+    stopButton.onclick = stop;
+    for (var index = 0; index < rows.length; index++) (function(row) {
+      row.querySelector(".xc-probe-one").onclick = function() { start([row]); };
+      row.querySelector(".xc-fast-switch-one").onclick = function() { fastSwitchNode(row); };
+    })(rows[index]);
+    setActive(activeSection);
+  }
+
+  window.XCProbeQueue = { start: start, stop: stop };
+  if (document.addEventListener) document.addEventListener("DOMContentLoaded", initialize);
+  else window.onload = initialize;
+})();
+</script>

@@ -1,0 +1,1907 @@
+local t = require "testlib"
+local runtime = require "xc.runtime"
+
+local UUID = "11111111-1111-1111-1111-111111111111"
+local RUNTIME = "/var/etc/xc/config.json"
+local DYNAMIC_RUNTIME = "dynamic-runtime"
+local XRAY_CANDIDATE = "/var/etc/xc/candidate.json"
+local ROLLBACK = "/etc/xc/rollback/config.json"
+local ROLLBACK_NODE = "/etc/xc/rollback/active_node"
+local PENDING_ROLLBACK = ROLLBACK .. ".pending"
+local PENDING_ROLLBACK_NODE = ROLLBACK_NODE .. ".pending"
+local CORE_HASH = "51c3e26e4ba03f3aabcdef1234567890abcdef1234567890abcdef1234567890"
+local UNSET_ACTIVE = "!xc-active-unset!"
+local MANIFEST = "/etc/xc/rollback/current"
+local TRANSACTION = "/etc/xc/rollback/transaction"
+local STATUS = "/var/run/xc-status"
+local LOG = "/var/log/xc.log"
+local LOG_LOCK = "/var/lock/xc-log.lock"
+local EXIT_IP_CACHE = "/var/etc/xc/exit-ip-cache"
+local FAST_SELECTION = "/etc/xc/rollback/fast-selection"
+local GEOSITE = "/usr/share/xray/geosite.dat"
+local GEOIP = "/usr/share/xray/geoip.dat"
+local V2RAY_GEOSITE = "/usr/share/v2ray/geosite.dat"
+local V2RAY_GEOIP = "/usr/share/v2ray/geoip.dat"
+
+local function checksum(value)
+  local hash = 5381
+  for index = 1, #value do hash = (hash * 33 + value:byte(index)) % 2147483647 end
+  return string.format("%08x", hash)
+end
+
+local function valid_utf8(value)
+  local index = 1
+  local function continuation(position)
+    local byte = value:byte(position)
+    return byte ~= nil and byte >= 128 and byte <= 191
+  end
+  while index <= #value do
+    local first = value:byte(index)
+    if first <= 127 then
+      index = index + 1
+    elseif first >= 194 and first <= 223 and continuation(index + 1) then
+      index = index + 2
+    elseif first >= 224 and first <= 239 then
+      local second = value:byte(index + 1)
+      if not second or not continuation(index + 2)
+        or (first == 224 and (second < 160 or second > 191))
+        or (first == 237 and (second < 128 or second > 159))
+        or (first ~= 224 and first ~= 237 and (second < 128 or second > 191)) then return false end
+      index = index + 3
+    elseif first >= 240 and first <= 244 then
+      local second = value:byte(index + 1)
+      if not second or not continuation(index + 2) or not continuation(index + 3)
+        or (first == 240 and (second < 144 or second > 191))
+        or (first == 244 and (second < 128 or second > 143))
+        or (first ~= 240 and first ~= 244 and (second < 128 or second > 191)) then return false end
+      index = index + 4
+    else
+      return false
+    end
+  end
+  return true
+end
+
+local function journal(config, active, generation)
+  generation = generation or "100-1"
+  local prefix = "/etc/xc/rollback/generation-" .. generation
+  local manifest = table.concat({ "xc-rollback-v1", generation, tostring(#config), checksum(config), tostring(#active), checksum(active), "" }, "\n")
+  return { [MANIFEST] = manifest, [prefix .. ".config"] = config, [prefix .. ".active"] = active }
+end
+
+local function transaction(phase, old_config, old_active, new_config, new_active, kind, generation, target, old_service, prior)
+  generation, kind = generation or "123-1", kind or "switch"
+  old_config, old_active = old_config or "", old_active or UNSET_ACTIVE
+  return table.concat({
+    "xc-transaction-v2", generation, kind, phase, generation, target or "-",
+    old_config == "" and "0" or "1", tostring(#old_config), checksum(old_config),
+    tostring(#old_active), checksum(old_active), tostring(#new_config), checksum(new_config),
+    tostring(#new_active), checksum(new_active), old_service or "running", prior or "-", ""
+  }, "\n")
+end
+
+local function merge(left, right)
+  for key, value in pairs(right) do left[key] = value end
+  return left
+end
+local LOCK = "/var/lock/xc.lock"
+local MAIN_UNLOCK = "fs:unlock:" .. LOCK
+local LOG_UNLOCK = "fs:unlock:" .. LOG_LOCK
+
+local function quote(value)
+  return '"' .. value:gsub('[%z\1-\31\\"]', function(character)
+    local escapes = { ['\\'] = '\\\\', ['"'] = '\\"', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
+    return escapes[character] or string.format("\\u%04x", character:byte())
+  end) .. '"'
+end
+
+local function stringify(value)
+  local kind = type(value)
+  if kind == "nil" then return "null" end
+  if kind == "boolean" then return value and "true" or "false" end
+  if kind == "number" then return tostring(value) end
+  if kind == "string" then return quote(value) end
+  if kind ~= "table" then error("unsupported JSON value") end
+  local count, maximum, array = 0, 0, true
+  for key in pairs(value) do
+    count = count + 1
+    if type(key) ~= "number" or key < 1 or key ~= math.floor(key) then array = false
+    elseif key > maximum then maximum = key end
+  end
+  if count == 0 then return "[]" end
+  if array and maximum == count then
+    local values = {}
+    for index = 1, maximum do values[index] = stringify(value[index]) end
+    return "[" .. table.concat(values, ",") .. "]"
+  end
+  local keys = {}
+  for key in pairs(value) do
+    if type(key) ~= "string" then error("mixed JSON table") end
+    keys[#keys + 1] = key
+  end
+  table.sort(keys)
+  local values = {}
+  for _, key in ipairs(keys) do values[#values + 1] = quote(key) .. ":" .. stringify(value[key]) end
+  return "{" .. table.concat(values, ",") .. "}"
+end
+
+local function node(id, enabled)
+  return {
+    id = id, name = "Node " .. id, enabled = enabled,
+    protocol = "vless", server = id .. ".invalid", port = 443,
+    uuid = UUID, encryption = "none", transport = "tcp", security = "none"
+  }
+end
+
+local function fixture(options)
+  options = options or {}
+  local events, files = options.events or {}, options.shared_files or {}
+  for path, content in pairs(options.files or {}) do files[path] = content end
+  if options.dynamic_config and files[RUNTIME] == nil then files[RUNTIME] = DYNAMIC_RUNTIME end
+  files[GEOSITE] = files[GEOSITE] or "geosite"
+  files[GEOIP] = files[GEOIP] or "geoip"
+  if options.asset_dir == "v2ray" then
+    files[GEOSITE], files[GEOIP] = nil, nil
+    files[V2RAY_GEOSITE] = files[V2RAY_GEOSITE] or "geosite-v2ray"
+    files[V2RAY_GEOIP] = files[V2RAY_GEOIP] or "geoip-v2ray"
+  end
+  if options.missing_assets then
+    if options.missing_assets.geosite then files[GEOSITE] = nil end
+    if options.missing_assets.geoip then files[GEOIP] = nil end
+  end
+  local global = options.global or { active_node = "old", socks_port = 7890, http_port = 10809 }
+  global.health_url = global.health_url or "https://health.invalid/generate_204"
+  global.health_timeout = global.health_timeout or 5
+  local nodes = options.nodes or { node("old", true), node("new", true) }
+  local by_id = {}
+  for _, value in ipairs(nodes) do by_id[value.id] = value end
+  local original_active = global.active_node
+  local state = { events = events, files = files, global = global, writes = {}, validation_deadlines = {} }
+  local generation_count = 0
+  local held_locks = {}
+  local function event(value) events[#events + 1] = value end
+  local function acquire_fixture_lock(path)
+    event("fs:lock:" .. path)
+    if options.throw_acquire then error("token=lock-secret") end
+    if options.busy or held_locks[path] then return nil end
+    held_locks[path] = true
+    return { path = path, kernel_flock = true }
+  end
+  local function release_fixture_lock(lock)
+    event("fs:unlock:" .. tostring(lock and lock.path))
+    if lock then held_locks[lock.path] = nil end
+    return options.release_ok ~= false
+  end
+  local uci = {
+    get_global = function() event("uci:get_global"); return global end,
+    list_nodes = function() event("uci:list_nodes"); return nodes end,
+    get_node = function(id)
+      event("uci:get_node:" .. tostring(id))
+      local forced = options.get_node_outcome
+      if forced then return forced == "ok" and by_id[id] or nil, forced end
+      local value = by_id[id]
+      return value, value and "ok" or "missing"
+    end,
+    set_active = function(id)
+      event("uci:set_active:" .. tostring(id))
+      if options.throw_set_active then error("password=adapter-secret") end
+      global.active_node = id
+      return true
+    end,
+    clear_active = function()
+      event("uci:clear_active")
+      global.active_node = nil
+      return true
+    end,
+    stage_global = function(values)
+      event("uci:stage_global")
+      if options.stage_global_ok == false or type(values) ~= "table" then return false end
+      for key, value in pairs(values) do global[key] = value end
+      return true
+    end,
+    commit = function()
+      event("uci:commit")
+      if options.throw_commit then error("password=commit-secret") end
+      if (options.commit_failures or 0) > 0 then
+        options.commit_failures = options.commit_failures - 1
+        return false, "pre_commit_failed"
+      end
+      if options.commit_ok == false then return false, options.commit_outcome or "pre_commit_failed" end
+      return true, options.commit_outcome or "committed"
+    end,
+    revert = function() event("uci:revert"); global.active_node = original_active; return true end
+  }
+  local fs = {
+    acquire_lock = acquire_fixture_lock,
+    release_lock = release_fixture_lock,
+    lock_state = function(path)
+      event("fs:lock_state:" .. path)
+      if options.lock_state then return options.lock_state(path) end
+      return options.busy and "held" or "unlocked"
+    end,
+    allocate_generation = function()
+      generation_count = generation_count + 1
+      return options.generation or ("123-" .. generation_count)
+    end,
+    list_generation_files = function() return options.generation_files or {} end,
+    trash_generation = function(directory, generation)
+      event("fs:trash_generation:" .. generation)
+      if options.trash_ok == false then return nil end
+      local token = generation
+      if files[directory .. "/generation-" .. generation .. ".config"] ~= nil then
+        files[directory .. "/.trash-" .. token .. ".config"] = files[directory .. "/generation-" .. generation .. ".config"]
+        files[directory .. "/.trash-" .. token .. ".active"] = files[directory .. "/generation-" .. generation .. ".active"]
+      end
+      files[directory .. "/generation-" .. generation .. ".config"] = nil
+      files[directory .. "/generation-" .. generation .. ".active"] = nil
+      return token
+    end,
+    delete_trashed_generation = function(directory, token)
+      event("fs:delete_trashed_generation:" .. token)
+      if (options.delete_trash_failures or 0) > 0 then
+        options.delete_trash_failures = options.delete_trash_failures - 1
+        return false
+      end
+      if options.delete_trash_ok == false then return false end
+      files[directory .. "/.trash-" .. token .. ".config"] = nil
+      files[directory .. "/.trash-" .. token .. ".active"] = nil
+      return true
+    end,
+    remove_generation = function(directory, generation)
+      event("fs:remove_generation:" .. generation)
+      files[directory .. "/generation-" .. generation .. ".config"] = nil
+      files[directory .. "/generation-" .. generation .. ".active"] = nil
+      return true
+    end,
+    read = function(path, maximum)
+      event("fs:read:" .. path)
+      if options.read_errors and options.read_errors[path] then return nil, options.read_errors[path] end
+      if files[path] == nil then return nil, "missing" end
+      if maximum and #files[path] > maximum then return nil, "too_large" end
+      return files[path]
+    end,
+    exists = function(path) event("fs:exists:" .. path); return files[path] ~= nil end,
+    stat_nofollow = function(path)
+      if options.symlink_core == path then return { type = "symlink" } end
+      if files[path] ~= nil then return { type = "reg", size = #files[path] } end
+      return nil
+    end,
+    write_temp = function(path, content)
+      if path == EXIT_IP_CACHE and options.cache_write_race then
+        local competing_lock = acquire_fixture_lock(LOCK)
+        if competing_lock then
+          state.competing_switch_started = true
+          global.active_node = "new"
+          release_fixture_lock(competing_lock)
+        end
+      end
+      local temporary = path .. ".tmp.123"
+      event("fs:write_temp:" .. temporary)
+      state.writes[#state.writes + 1] = { path = path, content = content }
+      files[temporary] = content
+      return { path = temporary }
+    end,
+    chmod = function(path, mode) event("fs:chmod:" .. path .. ":" .. tostring(mode)); return true end,
+    fsync = function(handle)
+      event("fs:fsync:" .. handle.path)
+      if options.throw_fsync or options.fsync_fail_path == handle.path or (options.fsync_failures or 0) > 0 then
+        if options.fsync_failures then options.fsync_failures = options.fsync_failures - 1 end
+        error("raw adapter exception {secret}")
+      end
+      return true
+    end,
+    close = function(handle) event("fs:close:" .. handle.path); return true end,
+    fsync_dir = function(path) event("fs:fsync_dir:" .. path); return options.fsync_dir_ok ~= false end,
+    rename = function(source, destination)
+      event("fs:rename:" .. source .. ":" .. destination)
+      files[destination], files[source] = files[source], nil
+      if destination == EXIT_IP_CACHE and options.cache_rename_hook then options.cache_rename_hook(global, files) end
+      return true
+    end,
+    remove = function(path) event("fs:remove:" .. path); if options.remove_ok == false then return false end; files[path] = nil; return true end,
+    append = function(path, content) event("fs:append:" .. path); files[path] = (files[path] or "") .. content; return true end
+  }
+  local exec = {
+    hash_file = function() return options.core_hash or CORE_HASH end,
+    machine = function() return options.machine or "aarch64" end,
+    run = function(argv, deadline, environment)
+      event("exec:run:" .. table.concat(argv, "|"))
+      if options.asset_dir == "v2ray" and type(environment) == "table" and environment.XRAY_LOCATION_ASSET then
+        event("exec:asset:" .. environment.XRAY_LOCATION_ASSET)
+      end
+      state.validation_deadlines[#state.validation_deadlines + 1] = deadline
+      return options.validation_ok ~= false
+    end,
+    restart = function()
+      event("exec:restart")
+      if (options.restart_failures or 0) > 0 then
+        options.restart_failures = options.restart_failures - 1
+        return false
+      end
+      return options.restart_ok ~= false
+    end,
+    stop = function() event("exec:stop"); return options.stop_ok ~= false end,
+    listener_ready = function(kind, address, port, deadline)
+      event("exec:listener:" .. kind .. ":" .. address .. ":" .. tostring(port))
+      state.listener_deadlines = state.listener_deadlines or {}
+      state.listener_deadlines[#state.listener_deadlines + 1] = deadline
+      if options.listener_hook then options.listener_hook(kind, deadline, global) end
+      if options.listener_failures and (options.listener_failures[kind] or 0) > 0 then
+        options.listener_failures[kind] = options.listener_failures[kind] - 1
+        return false
+      end
+      return not options.listener_fail or options.listener_fail ~= kind
+    end,
+    real_connection_check = function(kind, address, port, health_url, deadline)
+      event("exec:real_connection:" .. kind .. ":" .. address .. ":" .. tostring(port))
+      state.health_url, state.health_deadline = health_url, deadline
+      if options.health_hook then options.health_hook(kind, deadline) end
+      if options.health_failures and (options.health_failures[kind] or 0) > 0 then
+        options.health_failures[kind] = options.health_failures[kind] - 1
+        return { ok = false }
+      end
+      if options.health_fail and options.health_fail == kind then return { ok = false } end
+      return { ok = true, time = kind == "socks" and 12 or 34, status = 204 }
+    end,
+    observe_exit_ip = function(kind, address, port, health_url, deadline)
+      event("exec:exit_ip:" .. kind .. ":" .. address .. ":" .. tostring(port))
+      state.exit_ip_url, state.exit_ip_deadline = health_url, deadline
+      if options.observe_hook then options.observe_hook(global, files) end
+      if options.exit_ip_throw then error("password=exit-secret") end
+      return options.exit_ip
+    end,
+    xray_api_override = function(_, _, tag)
+      event("exec:api_override:" .. tostring(tag))
+      local overridden
+      if options.api_override_hook then overridden = options.api_override_hook(tag, state) else overridden = options.api_override_ok ~= false end
+      if overridden and not options.api_sticky then options.api_current = tag end
+      return overridden
+    end,
+    xray_api_balancer = function()
+      local current = options.api_current
+      if options.api_balancer_hook then current = options.api_balancer_hook(state) end
+      if options.api_balancer_ok == false then current = nil end
+      event("exec:api_balancer:" .. tostring(current))
+      return current
+    end,
+    service_state = function() return options.service_state or "running" end
+  }
+  local function parse_json(text)
+    if options.dynamic_config and text == DYNAMIC_RUNTIME then
+      return options.dynamic_config_value or {
+        api = { tag = "xc-api", services = { "RoutingService" } },
+        inbounds = { { tag = "xc-api", listen = "127.0.0.1", port = 10085, protocol = "dokodemo-door" } },
+        outbounds = {
+          { tag = "xc-node-old", protocol = "vless" },
+          { tag = "xc-node-new", protocol = "vless" },
+          { tag = "direct", protocol = "freedom" },
+          { tag = "block", protocol = "blackhole" },
+          { tag = "xc-api", protocol = "freedom" }
+        },
+        routing = { rules = {
+          { type = "field", inboundTag = { "xc-api" }, outboundTag = "xc-api" },
+          { type = "field", balancerTag = "xc-balancer" }
+        }, balancers = { { tag = "xc-balancer", selector = { "xc-node-old", "xc-node-new" } } } }
+      }
+    end
+    if text:match('^{"access_') then
+      local output = {}
+      for key, value in text:gmatch('"(access_[^"]+)":"([^\"]*)"') do
+        value = value:gsub("\\n", "\n"):gsub("\\r", "\r"):gsub('\\"', '"'):gsub("\\\\", "\\")
+        output[key] = value
+      end
+      return output
+    end
+    local id, version, arch, size, sha256, uploaded_at = text:match('"id":"([^"]+)".-"version":"([^"]+)".-"arch":"([^"]+)".-"size":(%d+).-"sha256":"([^"]+)".-"uploaded_at":(%d+)')
+    if not id then
+      if text == "not-json" then return nil end
+      return {}
+    end
+    return { id = id, version = version, arch = arch, size = tonumber(size), sha256 = sha256, uploaded_at = tonumber(uploaded_at) }
+  end
+  state.runtime = assert(runtime.new({
+    uci = uci, fs = fs, exec = exec, json = { stringify = stringify, parse = parse_json },
+    network = function() return "192.168.6.1" end,
+    now = options.now or function() return 123 end,
+    wall_time = options.wall_time or function() return 1785326400 end,
+    sleep = function() event("sleep"); if options.sleep_hook then options.sleep_hook() end end
+  }))
+  return state
+end
+
+local function event_index(events, sought)
+  for index, value in ipairs(events) do if value == sought then return index end end
+end
+
+local function occurrences(value, sought)
+  local count, offset = 0, 1
+  while true do
+    local first, last = (value or ""):find(sought, offset, true)
+    if not first then return count end
+    count, offset = count + 1, last + 1
+  end
+end
+
+t.test("exit IP cache resides under the protected runtime directory", function()
+  t.eq(runtime.paths.exit_ip_cache, "/var/etc/xc/exit-ip-cache")
+end)
+
+t.test("render rejects missing and disabled active nodes", function()
+  local missing = fixture({ global = { active_node = "gone", socks_port = 7890, http_port = 10809 }, nodes = { node("only", true) } })
+  local result = missing.runtime:render(nil, "/tmp/render.json")
+  t.eq(result.ok, false)
+  t.eq(result.code, "missing_node")
+  t.eq(missing.files["/tmp/render.json"], nil)
+
+  local disabled = fixture({ global = { active_node = "off", socks_port = 7890, http_port = 10809 }, nodes = { node("off", false) } })
+  result = disabled.runtime:render(nil, "/tmp/render.json")
+  t.eq(result.ok, false)
+  t.eq(result.code, "disabled_node")
+end)
+
+t.test("render refuses preset routing when either geo asset is missing", function()
+  for _, missing in ipairs({ "geosite", "geoip" }) do
+    local state = fixture({ missing_assets = { [missing] = true } })
+    local result = state.runtime:render("new", "/tmp/render.json")
+    t.eq(result.ok, false)
+    t.eq(result.code, "routing_assets_missing")
+    t.eq(state.files["/tmp/render.json"], nil)
+    for _, event in ipairs(state.events) do t.eq(event:match("^exec:run:"), nil) end
+  end
+
+  local disabled = fixture({
+    missing_assets = { geosite = true, geoip = true },
+    global = { routing_enabled = "0", active_node = "old", socks_port = 7890, http_port = 10809 }
+  })
+  t.eq(disabled.runtime:render("new", "/tmp/render.json").ok, true)
+end)
+
+t.test("access rejects conflicting rules before Xray or UCI mutation", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:apply_access({ direct_domains = "example.com", proxy_domains = "example.com" })
+  t.eq(result.ok, false)
+  t.eq(result.code, "access_rule_conflict")
+  t.eq(event_index(state.events, "uci:stage_global"), nil)
+  t.eq(event_index(state.events, "exec:run:"), nil)
+  t.eq(event_index(state.events, "uci:commit"), nil)
+end)
+
+t.test("access applies a validated candidate without replacing its rollback base", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:apply_access({ direct_domains = "example.com", proxy_domains = "openai.com" })
+  t.eq(result.ok, true)
+  t.eq(result.code, "access_applied")
+  t.eq(state.global.access_direct_domains, "domain:example.com")
+  t.eq(state.files["/etc/xc/rollback/generation-123-1.config"], "old-runtime")
+  t.truthy(event_index(state.events, "uci:stage_global"))
+  t.truthy(event_index(state.events, "exec:run:/usr/bin/xray|run|-test|-format|json|-c|/var/etc/xc/candidate.json"))
+  t.truthy(event_index(state.events, "uci:commit"))
+end)
+
+t.test("access rollback restores the complete previous UCI access configuration", function()
+  local state = fixture({
+    global = {
+      active_node = "old", socks_port = 7890, http_port = 10809,
+      access_dns_remote = "https://9.9.9.9/dns-query", access_dns_cn = "114.114.114.114",
+      access_dns_fallback = "https://1.0.0.1/dns-query", access_direct_domains = "domain:old.example"
+    },
+    files = { [RUNTIME] = "old-runtime" },
+    commit_failures = 1
+  })
+  local result = state.runtime:apply_access({ direct_domains = "new.example" })
+  t.eq(result.ok, false)
+  t.eq(result.code, "commit_failed")
+  t.eq(state.global.access_dns_remote, "https://9.9.9.9/dns-query")
+  t.eq(state.global.access_dns_cn, "114.114.114.114")
+  t.eq(state.global.access_dns_fallback, "https://1.0.0.1/dns-query")
+  t.eq(state.global.access_direct_domains, "domain:old.example")
+end)
+
+t.test("switch accepts v2ray geodata and passes its asset directory to Xray", function()
+  local state = fixture({ asset_dir = "v2ray" })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.truthy(event_index(state.events, "exec:asset:/usr/share/v2ray"))
+end)
+
+t.test("render auto-selects only a sole enabled node and writes atomically", function()
+  local state = fixture({ global = { socks_port = 7890, http_port = 10809 }, nodes = { node("off", false), node("only", true) } })
+  local result = state.runtime:render(nil, "/tmp/render.json")
+  t.eq(result.ok, true)
+  t.eq(result.node, "only")
+  t.contains(state.files["/tmp/render.json"], '"listen":"192.168.6.1"')
+  t.truthy(event_index(state.events, "fs:chmod:/tmp/render.json.tmp.123:0600"))
+  t.truthy(event_index(state.events, "fs:fsync:/tmp/render.json.tmp.123"))
+  t.truthy(event_index(state.events, "fs:close:/tmp/render.json.tmp.123"))
+  t.truthy(event_index(state.events, "fs:rename:/tmp/render.json.tmp.123:/tmp/render.json"))
+
+  local multiple = fixture({ global = { socks_port = 7890, http_port = 10809 }, nodes = { node("one", true), node("two", true) } })
+  t.eq(multiple.runtime:render(nil, "/tmp/render.json").code, "active_node_required")
+  local none = fixture({ global = { socks_port = 7890, http_port = 10809 }, nodes = { node("off", false) } })
+  t.eq(none.runtime:render(nil, "/tmp/render.json").code, "no_enabled_nodes")
+  local empty = fixture({ global = { active_node = "", socks_port = 7890, http_port = 10809 }, nodes = { node("only", true) } })
+  local empty_result = empty.runtime:render(nil, "/tmp/render.json")
+  t.eq(empty_result.ok, true)
+  t.eq(empty_result.node, "only")
+end)
+
+t.test("fast switch changes the live balancer without restarting or probing", function()
+  local state = fixture({ dynamic_config = true, api_current = "xc-node-old" })
+  local value = state.runtime:fast_switch("new")
+  t.eq(value.ok, true)
+  t.eq(value.code, "fast_switched")
+  t.eq(value.node, "new")
+  t.eq(state.global.active_node, "new")
+  local joined = table.concat(state.events, "|")
+  t.truthy(event_index(state.events, "exec:api_override:xc-node-new"))
+  t.truthy(event_index(state.events, "exec:api_balancer:xc-node-new"))
+  t.truthy(event_index(state.events, "uci:set_active:new"))
+  t.truthy(event_index(state.events, "uci:commit"))
+  t.truthy(joined:find("exec:restart", 1, true) == nil)
+  t.truthy(joined:find("exec:listener:", 1, true) == nil)
+  t.truthy(joined:find("exec:real_connection:", 1, true) == nil)
+end)
+
+t.test("fast switching invalidates exit IP cache before an old node can reuse it", function()
+  local valid_cache = "node=old\nconfig=" .. checksum(DYNAMIC_RUNTIME) .. "\nobserved_at=1785326399\nip=203.0.113.10\n"
+  local state = fixture({
+    dynamic_config = true, api_current = "xc-node-old", exit_ip = "198.51.100.44",
+    shared_files = { [RUNTIME] = DYNAMIC_RUNTIME, [EXIT_IP_CACHE] = valid_cache }
+  })
+
+  local switched = state.runtime:fast_switch("new")
+  t.eq(switched.ok, true)
+  t.eq(state.files[EXIT_IP_CACHE], nil)
+
+  switched = state.runtime:fast_switch("old")
+  t.eq(switched.ok, true)
+  t.eq(state.files[EXIT_IP_CACHE], nil)
+  t.eq(state.runtime:status().exit_ip, "198.51.100.44")
+  t.truthy(event_index(state.events, "exec:exit_ip:socks:192.168.6.1:7890"))
+end)
+
+t.test("service restart checks listeners without requiring a public health request", function()
+  local state = fixture({
+    files = { [RUNTIME] = "prepared-runtime" },
+    health_fail = "socks"
+  })
+  local restarted = state.runtime:restart_service()
+  t.eq(restarted.ok, true)
+  t.eq(restarted.code, "restarted")
+  t.eq(occurrences(table.concat(state.events, "|"), "exec:listener:socks"), 1)
+  t.eq(occurrences(table.concat(state.events, "|"), "exec:listener:http"), 1)
+  t.eq(event_index(state.events, "exec:real_connection:socks:192.168.6.1:7890"), nil)
+  t.eq(event_index(state.events, "uci:commit"), nil)
+end)
+
+t.test("service restart reports listener failure separately", function()
+  local state = fixture({ files = { [RUNTIME] = "prepared-runtime" }, listener_fail = "http" })
+  local restarted = state.runtime:restart_service()
+  t.eq(restarted.ok, false)
+  t.eq(restarted.code, "restart_failed")
+  t.contains(state.files[LOG], '"code":"restart_failed"')
+end)
+
+t.test("service recovery removes a pending transaction only after old configuration is ready", function()
+  local old_config, old_active = "old-runtime", "old"
+  local state = fixture({
+    files = {
+      [RUNTIME] = "new-runtime",
+      [TRANSACTION] = transaction("install_intent", old_config, old_active, "new-runtime", "new"),
+      ["/etc/xc/rollback/generation-123-1.config"] = old_config,
+      ["/etc/xc/rollback/generation-123-1.active"] = old_active
+    }
+  })
+  local recovered = state.runtime:recover_service()
+  t.eq(recovered.ok, true)
+  t.eq(recovered.code, "recovered")
+  t.eq(state.files[TRANSACTION], nil)
+end)
+
+t.test("service recovery preserves the pending transaction when listeners are not ready", function()
+  local old_config, old_active = "old-runtime", "old"
+  local state = fixture({
+    listener_fail = "socks",
+    files = {
+      [RUNTIME] = "new-runtime",
+      [TRANSACTION] = transaction("install_intent", old_config, old_active, "new-runtime", "new"),
+      ["/etc/xc/rollback/generation-123-1.config"] = old_config,
+      ["/etc/xc/rollback/generation-123-1.active"] = old_active
+    }
+  })
+  local recovered = state.runtime:recover_service()
+  t.eq(recovered.ok, false)
+  t.eq(recovered.code, "recovery_required")
+  t.truthy(state.files[TRANSACTION])
+  t.eq(state.global.active_node, "old")
+end)
+
+t.test("render_dynamic writes a loopback API and all enabled node outbounds", function()
+  local state = fixture()
+  local value = state.runtime:render_dynamic(RUNTIME)
+  t.eq(value.ok, true)
+  t.eq(value.code, "dynamic_rendered")
+  t.contains(state.files[RUNTIME], '"tag":"xc-balancer"')
+  t.contains(state.files[RUNTIME], '"listen":"127.0.0.1"')
+  t.contains(state.files[RUNTIME], '"port":10085')
+  t.contains(state.files[RUNTIME], '"tag":"xc-node-old"')
+  t.contains(state.files[RUNTIME], '"tag":"xc-node-new"')
+end)
+
+t.test("fast switch fails closed when the API is unavailable or not applied", function()
+  local unavailable = fixture({ dynamic_config = true, api_override_ok = false })
+  local result = unavailable.runtime:fast_switch("new")
+  t.eq(result.code, "fast_switch_api_failed")
+  t.eq(unavailable.global.active_node, "old")
+  t.eq(event_index(unavailable.events, "uci:commit"), nil)
+
+  local not_applied = fixture({ dynamic_config = true, api_current = "xc-node-old", api_sticky = true })
+  result = not_applied.runtime:fast_switch("new")
+  t.eq(result.code, "fast_switch_not_applied")
+  t.eq(not_applied.global.active_node, "old")
+  t.eq(event_index(not_applied.events, "uci:commit"), nil)
+end)
+
+t.test("fast switch restores the old live tag after active-node commit failure", function()
+  local state = fixture({
+    dynamic_config = true, api_current = "xc-node-old", commit_ok = false, commit_outcome = "pre_commit_failed"
+  })
+  local result = state.runtime:fast_switch("new")
+  t.eq(result.code, "fast_switch_commit_failed")
+  t.eq(state.global.active_node, "old")
+  t.truthy(event_index(state.events, "exec:api_override:xc-node-new"))
+  t.truthy(event_index(state.events, "exec:api_override:xc-node-old"))
+end)
+
+t.test("fast switch persists an uncertain commit marker until startup reconciliation", function()
+  local state = fixture({
+    dynamic_config = true, api_current = "xc-node-old",
+    commit_ok = false, commit_outcome = "commit_unknown"
+  })
+  local result = state.runtime:fast_switch("new")
+  t.eq(result.code, "fast_switch_recovery_required")
+  t.truthy(state.files[FAST_SELECTION])
+  t.contains(state.files[FAST_SELECTION], "xc-fast-selection-v1")
+end)
+
+t.test("fast switch reports recovery required when old live tag cannot be restored", function()
+  local state = fixture({
+    dynamic_config = true, api_current = "xc-node-old",
+    commit_ok = false, commit_outcome = "pre_commit_failed",
+    api_override_hook = function(tag) return tag ~= "xc-node-old" end
+  })
+  local result = state.runtime:fast_switch("new")
+  t.eq(result.code, "fast_switch_recovery_required")
+  t.eq(state.global.active_node, "old")
+  t.truthy(event_index(state.events, "exec:api_override:xc-node-old"))
+end)
+
+t.test("restore_selection reapplies the persisted node without committing or restarting", function()
+  local state = fixture({ dynamic_config = true, api_current = "xc-node-old" })
+  local result = state.runtime:restore_selection()
+  t.eq(result.ok, true)
+  t.eq(result.code, "selection_restored")
+  t.eq(result.node, "old")
+  t.eq(event_index(state.events, "exec:api_override:xc-node-old") ~= nil, true)
+  t.eq(event_index(state.events, "exec:api_balancer:xc-node-old") ~= nil, true)
+  t.eq(event_index(state.events, "uci:commit"), nil)
+  t.eq(event_index(state.events, "exec:restart"), nil)
+end)
+
+t.test("restore_selection applies the persisted node when restart cleared the override", function()
+  local state = fixture({ dynamic_config = true, api_current = nil })
+  local result = state.runtime:restore_selection()
+  t.eq(result.ok, true)
+  t.eq(result.code, "selection_restored")
+  t.eq(result.node, "old")
+  t.truthy(event_index(state.events, "exec:api_override:xc-node-old"))
+  t.truthy(event_index(state.events, "exec:api_balancer:xc-node-old"))
+  t.eq(event_index(state.events, "uci:commit"), nil)
+  t.eq(event_index(state.events, "exec:restart"), nil)
+end)
+
+t.test("restore_selection waits for the loopback API to become ready", function()
+  local clock, reads = 123, 0
+  local state = fixture({
+    dynamic_config = true, api_current = nil,
+    now = function() return clock end,
+    sleep_hook = function() clock = clock + 1 end,
+    api_balancer_hook = function()
+      reads = reads + 1
+      if reads == 1 then return nil end
+      return "xc-node-old"
+    end
+  })
+  local result = state.runtime:restore_selection()
+  t.eq(result.ok, true)
+  t.eq(result.code, "selection_restored")
+  t.eq(reads, 2)
+  t.truthy(event_index(state.events, "sleep"))
+end)
+
+t.test("restore_selection waits through a slow Xray startup", function()
+  local clock, reads = 123, 0
+  local state = fixture({
+    dynamic_config = true, api_current = nil,
+    now = function() return clock end,
+    sleep_hook = function() clock = clock + 1 end,
+    api_balancer_hook = function()
+      reads = reads + 1
+      if reads < 20 then return nil end
+      return "xc-node-old"
+    end
+  })
+  local result = state.runtime:restore_selection()
+  t.eq(result.ok, true)
+  t.eq(result.code, "selection_restored")
+  t.truthy(reads >= 20)
+end)
+
+t.test("restore_selection rejects missing active node, stopped service, and safe runtime config", function()
+  local missing = fixture({ dynamic_config = true, global = { socks_port = 7890, http_port = 10809 } })
+  t.eq(missing.runtime:restore_selection().code, "fast_switch_target_invalid")
+
+  local stopped = fixture({ dynamic_config = true, service_state = "stopped" })
+  t.eq(stopped.runtime:restore_selection().code, "fast_switch_unavailable")
+
+  local safe = fixture({ files = { [RUNTIME] = "safe-runtime" } })
+  t.eq(safe.runtime:restore_selection().code, "fast_switch_unavailable")
+end)
+
+t.test("render validates section IDs and uses lossless raw encoding", function()
+  local raw = {
+    id = "raw_node", name = "raw", enabled = true, protocol = "raw",
+    raw_outbound = '{"protocol":"freedom","tag":"replace","settings":{"large":9007199254740993,"missing":null}}'
+  }
+  local state = fixture({ global = { socks_port = 7890, http_port = 10809 }, nodes = { raw } })
+  local unsafe = state.runtime:render("bad;reboot", "/tmp/render.json")
+  t.eq(unsafe.code, "invalid_node")
+  local result = state.runtime:render("raw_node", "/tmp/render.json")
+  t.eq(result.ok, true)
+  t.contains(state.files["/tmp/render.json"], '"large":9007199254740993')
+  t.contains(state.files["/tmp/render.json"], '"missing":null')
+  t.eq(state.files["/tmp/render.json"]:find("__XC_RAW_OUTBOUND_", 1, true), nil)
+end)
+
+t.test("render records exactly one final debug or error event with wall time", function()
+  local succeeded = fixture()
+  local value = succeeded.runtime:render("new", "/tmp/render.json")
+  t.eq(value.ok, true)
+  local line = succeeded.files[LOG]
+  t.eq(occurrences(line, '"message":"configuration render completed"'), 1)
+  t.contains(line, '"level":"debug"')
+  t.contains(line, '"code":"rendered"')
+  t.contains(line, '"node":"new"')
+  t.contains(line, '"outcome":"success"')
+  t.contains(line, '"time":1785326400')
+
+  local failed = fixture()
+  value = failed.runtime:render("bad;password=render-secret", "/tmp/render.json")
+  t.eq(value.code, "invalid_node")
+  line = failed.files[LOG]
+  t.eq(occurrences(line, '"message":"configuration render completed"'), 1)
+  t.contains(line, '"level":"error"')
+  t.contains(line, '"code":"invalid_node"')
+  t.contains(line, '"outcome":"failure"')
+  t.eq(line:find("render-secret", 1, true), nil)
+end)
+
+t.test("switch records exactly one final info or error event", function()
+  local succeeded = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local value = succeeded.runtime:switch("new")
+  t.eq(value.ok, true)
+  local line = succeeded.files[LOG]
+  t.eq(occurrences(line, '"message":"node switch completed"'), 1)
+  t.contains(line, '"level":"info"')
+  t.contains(line, '"code":"switched"')
+  t.contains(line, '"node":"new"')
+  t.contains(line, '"outcome":"success"')
+  t.eq(occurrences(line, '"message":"switched to node"'), 0)
+
+  local failed = fixture({ validation_ok = false, files = { [RUNTIME] = "old-runtime" } })
+  value = failed.runtime:switch("new")
+  t.eq(value.code, "validation_failed")
+  line = failed.files[LOG]
+  t.eq(occurrences(line, '"message":"node switch completed"'), 1)
+  t.contains(line, '"level":"error"')
+  t.contains(line, '"code":"validation_failed"')
+  t.contains(line, '"outcome":"failure"')
+end)
+
+t.test("runtime lifecycle logs expose safe stages and bounded duration", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local value = state.runtime:switch("new")
+  t.eq(value.ok, true)
+  local line = state.files[LOG]
+  t.truthy(line:find('"operation":"switch"', 1, true))
+  t.truthy(line:find('"stage":"started"', 1, true))
+  t.truthy(line:find('"stage":"completed"', 1, true))
+  local elapsed = tonumber(line:match('"elapsed_ms":(%d+)'))
+  t.truthy(elapsed ~= nil and elapsed >= 0 and elapsed <= 300000)
+  for _, forbidden in ipairs({ '"url"', '"uuid"', '"password"', '"raw"', '"config"' }) do
+    t.eq(line:find(forbidden, 1, true), nil)
+  end
+end)
+
+t.test("rollback records exactly one final info or error event", function()
+  local files = merge({ [RUNTIME] = "new-runtime" }, journal("old-runtime", "old"))
+  local succeeded = fixture({ files = files, global = { active_node = "new", socks_port = 7890, http_port = 10809 } })
+  local value = succeeded.runtime:rollback()
+  t.eq(value.ok, true)
+  local line = succeeded.files[LOG]
+  t.eq(occurrences(line, '"message":"rollback completed"'), 1)
+  t.contains(line, '"level":"info"')
+  t.contains(line, '"code":"rolled_back"')
+  t.contains(line, '"outcome":"success"')
+
+  local failed = fixture()
+  value = failed.runtime:rollback()
+  t.eq(value.code, "no_rollback_state")
+  line = failed.files[LOG]
+  t.eq(occurrences(line, '"message":"rollback completed"'), 1)
+  t.contains(line, '"level":"error"')
+  t.contains(line, '"code":"no_rollback_state"')
+  t.contains(line, '"outcome":"failure"')
+end)
+
+t.test("event logger faults never change runtime results or primary last_error", function()
+  local succeeded = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local success_attempts = 0
+  succeeded.runtime.log = function(self)
+    success_attempts = success_attempts + 1
+    self.last_error = "logger_fault"
+    error("password=logger-secret")
+  end
+  local called, value = pcall(succeeded.runtime.switch, succeeded.runtime, "new")
+  t.eq(called, true)
+  t.eq(value.ok, true)
+  t.eq(value.code, "switched")
+  t.eq(success_attempts, 3)
+  t.eq(succeeded.runtime.last_error, nil)
+
+  local failed = fixture({ validation_ok = false, files = { [RUNTIME] = "old-runtime" } })
+  local failure_attempts = 0
+  failed.runtime.log = function(self)
+    failure_attempts = failure_attempts + 1
+    self.last_error = "logger_fault"
+    error("raw logger exception")
+  end
+  called, value = pcall(failed.runtime.switch, failed.runtime, "new")
+  t.eq(called, true)
+  t.eq(value.ok, false)
+  t.eq(value.code, "validation_failed")
+  t.eq(failure_attempts, 3)
+  t.eq(failed.runtime.last_error, "validation_failed")
+end)
+
+t.test("switch validates before snapshot and commits only after listeners and health", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(result.code, "switched")
+  t.eq(state.global.active_node, "new")
+  t.truthy(state.files[MANIFEST])
+  t.eq(state.files["/etc/xc/rollback/generation-123-1.config"], "old-runtime")
+  t.eq(state.files["/etc/xc/rollback/generation-123-1.active"], "old")
+  local candidate = XRAY_CANDIDATE
+  local test_event = "exec:run:/usr/bin/xray|run|-test|-format|json|-c|" .. candidate
+  t.truthy(event_index(state.events, test_event) < event_index(state.events, "exec:restart"))
+  t.truthy(event_index(state.events, test_event) < event_index(state.events, "fs:write_temp:/etc/xc/rollback/generation-123-1.config.tmp.123"))
+  t.truthy(event_index(state.events, "exec:real_connection:http:192.168.6.1:10809") < event_index(state.events, "uci:set_active:new"))
+  t.truthy(event_index(state.events, "uci:set_active:new") < event_index(state.events, "uci:commit"))
+  t.truthy(event_index(state.events, "uci:commit") < event_index(state.events, "fs:rename:" .. MANIFEST .. ".tmp.123:" .. MANIFEST))
+  t.eq(state.health_url, "https://health.invalid/generate_204")
+  t.eq(state.health_deadline, 128)
+  t.truthy(event_index(state.events, MAIN_UNLOCK))
+  t.eq(state.events[#state.events], LOG_UNLOCK)
+end)
+
+t.test("switch commits only after both real proxy requests and returns their measurements", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(result.real_connection.socks.time, 12)
+  t.eq(result.real_connection.socks.status, 204)
+  t.eq(result.real_connection.http.time, 34)
+  t.eq(result.real_connection.http.status, 204)
+  t.truthy(event_index(state.events, "exec:real_connection:socks:192.168.6.1:7890") < event_index(state.events, "uci:set_active:new"))
+  t.truthy(event_index(state.events, "exec:real_connection:http:192.168.6.1:10809") < event_index(state.events, "uci:set_active:new"))
+
+  local failed = fixture({ health_failures = { http = 10 }, files = { [RUNTIME] = "old-runtime" } })
+  result = failed.runtime:switch("new")
+  t.eq(result.code, "health_failed")
+  t.eq(failed.global.active_node, "old")
+  t.eq(event_index(failed.events, "uci:set_active:new"), nil)
+end)
+
+t.test("runtime treats a committed hardening warning as committed state", function()
+  local state = fixture({
+    commit_outcome = "committed_hardening_failed",
+    files = { [RUNTIME] = "old-runtime" }
+  })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(result.commit_outcome, "committed_hardening_failed")
+  t.eq(state.global.active_node, "new")
+  t.eq(event_index(state.events, "uci:revert"), nil)
+end)
+
+t.test("runtime reverts only a definitely uncommitted active-node commit", function()
+  local state = fixture({
+    commit_failures = 1,
+    files = { [RUNTIME] = "old-runtime" }
+  })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "commit_failed")
+  t.truthy(event_index(state.events, "uci:revert"))
+  t.eq(state.global.active_node, "old")
+  t.eq(state.files[TRANSACTION], nil)
+end)
+
+t.test("runtime stops an uncertain commit and preserves transaction evidence", function()
+  for _, options in ipairs({
+    { commit_ok = false, commit_outcome = "commit_unknown" },
+    { throw_commit = true }
+  }) do
+    options.files = { [RUNTIME] = "old-runtime" }
+    local state = fixture(options)
+    local result = state.runtime:switch("new")
+    t.eq(result.ok, false)
+    t.eq(result.code, "commit_unknown")
+    t.eq(event_index(state.events, "uci:revert"), nil)
+    t.truthy(event_index(state.events, "exec:stop"))
+    t.truthy(type(state.files[TRANSACTION]) == "string")
+    t.contains(state.files[TRANSACTION], "\ncandidate_healthy\n")
+    t.eq(state.files[RUNTIME] == "old-runtime", false)
+  end
+
+  local rollback_files = merge({ [RUNTIME] = "new-runtime" }, journal("old-runtime", "old"))
+  local rollback = fixture({
+    commit_ok = false, commit_outcome = "commit_unknown", files = rollback_files,
+    global = { active_node = "new", socks_port = 7890, http_port = 10809 }
+  })
+  local rollback_result = rollback.runtime:rollback()
+  t.eq(rollback_result.ok, false)
+  t.eq(rollback_result.code, "commit_unknown")
+  t.eq(event_index(rollback.events, "uci:revert"), nil)
+  t.truthy(event_index(rollback.events, "exec:stop"))
+  t.contains(rollback.files[TRANSACTION], "\ncandidate_healthy\n")
+end)
+
+t.test("typed node read failures fail closed in load switch and status", function()
+  local loaded = fixture({ get_node_outcome = "read_failed" })
+  local _, _, load_error = loaded.runtime:_load("new")
+  t.eq(load_error.code, "internal_error")
+
+  local switched = fixture({
+    get_node_outcome = "read_failed",
+    files = { [RUNTIME] = "old-runtime" }
+  })
+  local switch_result = switched.runtime:switch("new")
+  t.eq(switch_result.ok, false)
+  t.eq(switch_result.code, "internal_error")
+  t.eq(event_index(switched.events, "fs:rename:" .. XRAY_CANDIDATE .. ":" .. RUNTIME), nil)
+
+  local status_state = fixture({ get_node_outcome = "read_failed" })
+  local status_result = status_state.runtime:status()
+  t.eq(status_result.ok, false)
+  t.eq(status_result.code, "internal_error")
+end)
+
+t.test("runtime maps only typed missing nodes to missing_node", function()
+  local missing = fixture({ get_node_outcome = "missing" })
+  local _, _, missing_error = missing.runtime:_load("new")
+  t.eq(missing_error.code, "missing_node")
+  t.eq(missing.runtime:status().code, "missing_node")
+
+  local uncertain = fixture({ get_node_outcome = "future_outcome" })
+  local _, _, uncertain_error = uncertain.runtime:_load("new")
+  t.eq(uncertain_error.code, "internal_error")
+end)
+
+t.test("failed switch preserves the prior successful rollback generation", function()
+  local state = fixture({
+    health_failures = { http = 10 },
+    files = merge({ [RUNTIME] = "runtime-B" }, journal("runtime-A", "A")),
+    global = { active_node = "B", socks_port = 7890, http_port = 10809 },
+    nodes = { node("A", true), node("B", true), node("C", true) }
+  })
+  local result = state.runtime:switch("C")
+  t.eq(result.code, "health_failed")
+  t.eq(state.files[RUNTIME], "runtime-B")
+  t.eq(state.global.active_node, "B")
+  t.truthy(state.files[MANIFEST])
+  t.eq(state.files["/etc/xc/rollback/generation-100-1.config"], "runtime-A")
+  t.eq(state.files[PENDING_ROLLBACK], nil)
+  t.eq(state.files[PENDING_ROLLBACK_NODE], nil)
+end)
+
+t.test("failed Xray validation never restarts and releases the lock", function()
+  local state = fixture({ validation_ok = false, files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "validation_failed")
+  t.eq(event_index(state.events, "exec:restart"), nil)
+  t.eq(state.global.active_node, "old")
+  t.truthy(event_index(state.events, MAIN_UNLOCK))
+  t.eq(state.events[#state.events], LOG_UNLOCK)
+  t.eq(state.files[XRAY_CANDIDATE], nil)
+
+  local invalid_health = fixture({ global = { active_node = "old", socks_port = 7890, http_port = 10809, health_url = "file:///secret", health_timeout = 999 } })
+  result = invalid_health.runtime:switch("new")
+  t.eq(result.code, "generation_failed")
+  t.eq(event_index(invalid_health.events, "exec:restart"), nil)
+end)
+
+t.test("real connection retries a transient proxy startup failure", function()
+  local clock = 123
+  local state = fixture({
+    health_failures = { http = 1 },
+    files = { [RUNTIME] = "old-runtime" },
+    now = function() return clock end,
+    sleep_hook = function() clock = clock + 1 end
+  })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(occurrences(table.concat(state.events, "|"), "exec:real_connection:http:192.168.6.1:10809"), 2)
+end)
+
+t.test("real connection retries after one attempt consumes only its request budget", function()
+  local clock = 123
+  local state = fixture({
+    health_failures = { socks = 1 },
+    global = { active_node = "old", socks_port = 7890, http_port = 10809, health_timeout = 20 },
+    files = { [RUNTIME] = "old-runtime" },
+    now = function() return clock end,
+    health_hook = function(kind, deadline)
+      if kind == "socks" and clock == 123 then clock = deadline end
+    end
+  })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(occurrences(table.concat(state.events, "|"), "exec:real_connection:socks:192.168.6.1:7890"), 2)
+end)
+
+t.test("real connection timeout starts after listener startup", function()
+  local clock = 123
+  local state = fixture({
+    global = { active_node = "old", socks_port = 7890, http_port = 10809, health_timeout = 5 },
+    files = { [RUNTIME] = "old-runtime" },
+    now = function() return clock end
+  })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.eq(state.listener_deadlines[1], clock + 30)
+  t.eq(state.health_deadline, clock + 5)
+end)
+
+t.test("listener and health failures restore the previous config and active node", function()
+  for failure, code in pairs({ listener_failures = "listener_failed", health_failures = "health_failed" }) do
+    local options = { files = { [RUNTIME] = "old-runtime" } }
+    options[failure] = failure == "listener_failures" and { http = 10 } or { socks = 10 }
+    local state = fixture(options)
+    local result = state.runtime:switch("new")
+    t.eq(result.ok, false)
+    t.eq(result.code, code)
+    t.eq(state.files[RUNTIME], "old-runtime")
+    t.eq(state.global.active_node, "old")
+    t.truthy(event_index(state.events, "uci:set_active:old"))
+    t.truthy(event_index(state.events, MAIN_UNLOCK))
+    t.eq(state.events[#state.events], LOG_UNLOCK)
+  end
+end)
+
+t.test("listener readiness waits and both health entries are always checked", function()
+  local state = fixture({ listener_failures = { socks = 1 }, files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, true)
+  t.truthy(event_index(state.events, "sleep"))
+
+  local failed = fixture({ health_failures = { socks = 10 }, files = { [RUNTIME] = "old-runtime" } })
+  result = failed.runtime:switch("new")
+  t.eq(result.code, "health_failed")
+  t.truthy(event_index(failed.events, "exec:real_connection:socks:192.168.6.1:7890"))
+  t.truthy(event_index(failed.events, "exec:real_connection:http:192.168.6.1:10809"))
+end)
+
+t.test("a failed first switch stops service when no old runtime exists", function()
+  local state = fixture({ health_failures = { http = 10 } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "health_failed_no_previous_config")
+  t.eq(state.files[RUNTIME], nil)
+  t.truthy(event_index(state.events, "exec:stop"))
+  t.eq(state.global.active_node, "old")
+end)
+
+t.test("lock contention returns busy without generating a candidate", function()
+  local state = fixture({ busy = true })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "busy")
+  t.eq(event_index(state.events, "uci:get_global"), nil)
+  t.eq(event_index(state.events, MAIN_UNLOCK), nil)
+end)
+
+t.test("central lock protects runtime render and rejects acquire or release faults", function()
+  local rendered = fixture()
+  local result = rendered.runtime:render("new", RUNTIME)
+  t.eq(result.ok, true)
+  t.eq(rendered.events[1], "fs:lock:" .. LOCK)
+  t.truthy(event_index(rendered.events, MAIN_UNLOCK))
+  t.eq(rendered.events[#rendered.events], LOG_UNLOCK)
+
+  local acquire = fixture({ throw_acquire = true })
+  result = acquire.runtime:switch("new")
+  t.eq(result.code, "internal_error")
+  t.eq(result.message:find("lock-secret", 1, true), nil)
+
+  local release = fixture({ release_ok = false, validation_ok = false })
+  result = release.runtime:switch("new")
+  t.eq(result.code, "internal_error")
+  t.eq(occurrences(release.files[LOG], '"message":"node switch completed"'), 1)
+  t.contains(release.files[LOG], '"code":"internal_error"')
+end)
+
+t.test("migration exclusive capability renders and writes under one runtime lock", function()
+  local state = fixture({ nodes = { node("only", true) }, global = { active_node = "only", socks_port = 7890, http_port = 10809 } })
+  t.eq(type(state.runtime.exclusive), "function")
+  local value = state.runtime:exclusive("migration", function(capability)
+    local rendered = capability.render("only", "/var/etc/xc/migration-candidate.json")
+    if not rendered.ok then return rendered end
+    capability.write("/etc/xc/migration-complete", "marker")
+    return { ok = true, code = "rendered", message = "configuration rendered" }
+  end)
+  t.eq(value.ok, true)
+  local joined = table.concat(state.events, "|")
+  local first_lock = assert(joined:find("fs:lock:/var/lock/xc.lock", 1, true))
+  local write = assert(joined:find("fs:write_temp:/etc/xc/migration-complete", 1, true))
+  local unlock = assert(joined:find(MAIN_UNLOCK, 1, true))
+  t.truthy(first_lock < write and write < unlock)
+  local _, locks = joined:gsub("fs:lock:/var/lock/xc.lock", "")
+  t.eq(locks, 1)
+  t.eq(occurrences(state.files[LOG], '"message":"configuration render completed"'), 1)
+end)
+
+t.test("adapter exceptions release the lock and return generic secret-safe errors", function()
+  local state = fixture({ throw_set_active = true, files = { [RUNTIME] = "old-runtime" } })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "recovery_failed")
+  t.eq(result.message:find("adapter-secret", 1, true), nil)
+  t.truthy(event_index(state.events, MAIN_UNLOCK))
+  t.eq(state.events[#state.events], LOG_UNLOCK)
+end)
+
+t.test("atomic write failures close and remove temporary files", function()
+  local state = fixture({ fsync_fail_path = XRAY_CANDIDATE .. ".tmp.123" })
+  local result = state.runtime:switch("new")
+  t.eq(result.ok, false)
+  t.eq(result.code, "internal_error")
+  local temporary = XRAY_CANDIDATE .. ".tmp.123"
+  t.truthy(event_index(state.events, "fs:close:" .. temporary))
+  t.truthy(event_index(state.events, "fs:remove:" .. temporary))
+  t.eq(state.files[temporary], nil)
+  t.truthy(event_index(state.events, MAIN_UNLOCK))
+  t.eq(state.events[#state.events], LOG_UNLOCK)
+end)
+
+t.test("rollback reports no snapshot and restores a one-generation snapshot", function()
+  local none = fixture()
+  local result = none.runtime:rollback()
+  t.eq(result.ok, false)
+  t.eq(result.code, "no_rollback_state")
+  t.truthy(event_index(none.events, MAIN_UNLOCK))
+  t.eq(none.events[#none.events], LOG_UNLOCK)
+
+  local state = fixture({ files = merge({ [RUNTIME] = "new-runtime" }, journal("old-runtime", "old")), global = { active_node = "new", socks_port = 7890, http_port = 10809 } })
+  result = state.runtime:rollback()
+  t.eq(result.ok, true)
+  t.eq(result.code, "rolled_back")
+  t.eq(state.files[RUNTIME], "old-runtime")
+  t.eq(state.global.active_node, "old")
+  t.eq(state.files[MANIFEST], nil)
+  t.truthy(event_index(state.events, "fs:chmod:" .. XRAY_CANDIDATE .. ".tmp.123:0600") < event_index(state.events, "exec:restart"))
+  t.truthy(event_index(state.events, "exec:restart") < event_index(state.events, "uci:commit"))
+  t.truthy(event_index(state.events, "exec:listener:http:192.168.6.1:10809"))
+  t.truthy(event_index(state.events, "exec:real_connection:socks:192.168.6.1:7890"))
+  t.truthy(event_index(state.events, "exec:real_connection:http:192.168.6.1:10809"))
+end)
+
+t.test("rollback rejects corrupt journal snapshots before Xray or installation", function()
+  local files = journal("old-runtime", "old")
+  files["/etc/xc/rollback/generation-100-1.config"] = "tampered"
+  files[RUNTIME] = "current-runtime"
+  local state = fixture({ files = files })
+  local result = state.runtime:rollback()
+  t.eq(result.code, "no_rollback_state")
+  t.eq(state.files[RUNTIME], "current-runtime")
+  t.eq(event_index(state.events, "exec:restart"), nil)
+end)
+
+t.test("rollback failures restore the pre-rollback runtime UCI and service", function()
+  local cases = {
+    { options = { restart_failures = 1 }, code = "restart_failed" },
+    { options = { commit_failures = 1 }, code = "commit_failed" },
+    { options = { health_failures = { http = 10 } }, code = "health_failed" },
+    { options = { fsync_fail_path = XRAY_CANDIDATE .. ".tmp.123" }, code = "internal_error" }
+  }
+  for _, case in ipairs(cases) do
+    case.options.files = merge({ [RUNTIME] = "runtime-new" }, journal("runtime-old", "old"))
+    case.options.global = { active_node = "new", socks_port = 7890, http_port = 10809 }
+    local state = fixture(case.options)
+    local result = state.runtime:rollback()
+    t.eq(result.ok, false)
+    t.eq(result.code, case.code)
+    t.eq(state.files[RUNTIME], "runtime-new")
+    t.eq(state.global.active_node, "new")
+    t.truthy(state.files[MANIFEST])
+    t.truthy(event_index(state.events, MAIN_UNLOCK))
+    t.eq(state.events[#state.events], LOG_UNLOCK)
+  end
+end)
+
+t.test("rollback restores an explicitly unset active node", function()
+  local state = fixture({
+    files = { [RUNTIME] = "runtime-before" },
+    global = { socks_port = 7890, http_port = 10809 },
+    nodes = { node("only", true) }
+  })
+  local switched = state.runtime:switch(nil)
+  t.eq(switched.ok, true)
+  t.eq(state.global.active_node, "only")
+  t.eq(state.files["/etc/xc/rollback/generation-123-1.active"], UNSET_ACTIVE)
+  local rolled_back = state.runtime:rollback()
+  t.eq(rolled_back.ok, true)
+  t.eq(state.global.active_node, nil)
+  t.truthy(event_index(state.events, "uci:clear_active"))
+  t.eq(state.files[RUNTIME], "runtime-before")
+end)
+
+t.test("status and test_current omit credentials and use only fixed argv", function()
+  local secret_node = node("old", true)
+  secret_node.name = "https://sub.invalid/opaque-secret-token"
+  local state = fixture({ files = { [RUNTIME] = "raw-secret-runtime" }, nodes = { secret_node } })
+  local status = state.runtime:status()
+  t.eq(status.ok, true)
+  t.eq(status.active_node, "old")
+  t.eq(status.node.name, "[redacted]")
+  t.eq(status.node.uuid, nil)
+  t.eq(status.node.raw_outbound, nil)
+  t.eq(status.service, "running")
+  t.eq(status.operation, "idle")
+  t.eq(status.active_state, "selected")
+  t.eq(status.listen.address, "192.168.6.1")
+  t.eq(status.listeners.socks, true)
+  t.eq(status.listeners.http, true)
+  local tested = state.runtime:test_current()
+  t.eq(tested.ok, true)
+  t.truthy(event_index(state.events, "exec:run:/usr/bin/xray|run|-test|-format|json|-c|" .. RUNTIME))
+  t.eq(stringify(status):find(UUID, 1, true), nil)
+  t.eq(stringify(status):find("https://", 1, true), nil)
+  t.eq(stringify(status):find("opaque-secret-token", 1, true), nil)
+  t.eq(stringify(tested):find("raw-secret-runtime", 1, true), nil)
+end)
+
+t.test("test_current performs the same real SOCKS and HTTP connection checks", function()
+  local state = fixture({ files = { [RUNTIME] = "runtime" } })
+  local tested = state.runtime:test_current()
+  t.eq(tested.ok, true)
+  t.eq(tested.code, "test_passed")
+  t.eq(tested.real_connection.socks.time, 12)
+  t.eq(tested.real_connection.http.time, 34)
+  t.truthy(event_index(state.events, "exec:real_connection:socks:192.168.6.1:7890"))
+  t.truthy(event_index(state.events, "exec:real_connection:http:192.168.6.1:10809"))
+
+  local failed = fixture({ health_failures = { socks = 10 }, files = { [RUNTIME] = "runtime" } })
+  tested = failed.runtime:test_current()
+  t.eq(tested.ok, false)
+  t.eq(tested.code, "health_failed")
+  t.eq(failed.global.active_node, "old")
+end)
+
+t.test("runtime tests the selected managed Xray core without replacing system path", function()
+  local managed = "v26_6_27-aarch64-51c3e26e4ba03f3a"
+  local managed_path = "/etc/xc/xray/versions/" .. managed .. "/xray"
+  local state = fixture({ files = {
+    [RUNTIME] = "runtime",
+    ["/etc/xc/xray/current"] = managed .. "\n",
+    [managed_path] = "managed-core",
+    ["/etc/xc/xray/versions/" .. managed .. "/manifest.json"] =
+      '{"id":"' .. managed .. '","version":"26.6.27","arch":"aarch64","size":12,"sha256":"' .. CORE_HASH .. '","uploaded_at":1}'
+  } })
+  local tested = state.runtime:test_current()
+  t.eq(tested.ok, true)
+  t.truthy(event_index(state.events, "exec:run:" .. managed_path .. "|run|-test|-format|json|-c|" .. RUNTIME))
+end)
+
+t.test("runtime refuses a symlinked selected managed Xray core", function()
+  local managed = "v26_6_27-aarch64-51c3e26e4ba03f3a"
+  local managed_path = "/etc/xc/xray/versions/" .. managed .. "/xray"
+  local state = fixture({ symlink_core = managed_path, files = {
+    [RUNTIME] = "runtime",
+    ["/etc/xc/xray/current"] = managed .. "\n",
+    [managed_path] = "managed-core",
+    ["/etc/xc/xray/versions/" .. managed .. "/manifest.json"] =
+      '{"id":"' .. managed .. '","version":"26.6.27","arch":"aarch64","size":12,"sha256":"' .. CORE_HASH .. '","uploaded_at":1}'
+  } })
+  local tested = state.runtime:test_current()
+  t.eq(tested.ok, false)
+  t.eq(tested.code, "test_failed")
+end)
+
+t.test("status observes a bounded whitelisted exit IP through the local proxy", function()
+  local valid = fixture({ exit_ip = "203.0.113.9\n" })
+  local status = valid.runtime:status()
+  t.eq(status.exit_ip, "203.0.113.9")
+  t.eq(valid.exit_ip_url, valid.global.health_url)
+  t.eq(valid.exit_ip_deadline, 128)
+  t.truthy(event_index(valid.events, "exec:exit_ip:socks:192.168.6.1:7890"))
+
+  for _, unsafe in ipairs({ "", "203.0.113.9 secret", "https://credential.invalid", "999.1.1.1", "::::", "1:2", string.rep("1", 200) }) do
+    local failed_fixture = fixture({ exit_ip = unsafe })
+    local failed = failed_fixture.runtime:status()
+    t.eq(failed.ok, true); t.eq(failed.exit_ip, nil)
+  end
+  local thrown_fixture = fixture({ exit_ip_throw = true })
+  local thrown = thrown_fixture.runtime:status()
+  t.eq(thrown.ok, true); t.eq(thrown.exit_ip, nil)
+end)
+
+t.test("status keeps one listener deadline and computes exit observation deadline afterwards", function()
+  local clock = 10
+  local state = fixture({
+    exit_ip = "203.0.113.9",
+    now = function() return clock end,
+    listener_hook = function(kind)
+      if kind == "http" then clock = 20 end
+    end
+  })
+  local status = state.runtime:status()
+  t.eq(status.exit_ip, "203.0.113.9")
+  t.eq(state.listener_deadlines[1], 12)
+  t.eq(state.listener_deadlines[2], 12)
+  t.eq(state.exit_ip_deadline, 25)
+end)
+
+t.test("status reuses only a fresh strict same-node exit IP cache", function()
+  local wall_now = 1000
+  local valid_cache = "node=old\nconfig=" .. checksum("runtime-a") .. "\nobserved_at=941\nip=203.0.113.10\n"
+  local cached = fixture({ shared_files = { [RUNTIME] = "runtime-a", [EXIT_IP_CACHE] = valid_cache }, wall_time = function() return wall_now end, exit_ip = "198.51.100.1" })
+  t.eq(cached.runtime:status().exit_ip, "203.0.113.10")
+  t.eq(event_index(cached.events, "exec:exit_ip:socks:192.168.6.1:7890"), nil)
+  t.truthy(event_index(cached.events, "fs:read:" .. EXIT_IP_CACHE))
+
+  local invalid = {
+    "node=new\nobserved_at=999\nip=203.0.113.10\n",
+    "node=old\nobserved_at=940\nip=203.0.113.10\n",
+    "node=old\nobserved_at=1001\nip=203.0.113.10\n",
+    "node=old\nobserved_at=1.5\nip=203.0.113.10\n",
+    "node=old\nobserved_at=abc\nip=203.0.113.10\n",
+    "node=old\nobserved_at=999\nip=999.0.0.1\n",
+    "node=bad;node\nobserved_at=999\nip=203.0.113.10\n",
+    "node=old\nnode=old\nobserved_at=999\nip=203.0.113.10\n",
+    "node=old\nobserved_at=999\nip=203.0.113.10\nextra=x\n",
+    "node=old\nobserved_at=999\nip=203.0.113.10",
+    "observed_at=999\nnode=old\nip=203.0.113.10\n",
+    string.rep("x", 513)
+  }
+  for index, content in ipairs(invalid) do
+    local state = fixture({ shared_files = { [EXIT_IP_CACHE] = content }, wall_time = function() return wall_now end, exit_ip = "198.51.100.2" })
+    t.eq(state.runtime:status().exit_ip, "198.51.100.2", "accepted malformed cache " .. index)
+    t.truthy(event_index(state.events, "exec:exit_ip:socks:192.168.6.1:7890"), "did not observe for malformed cache " .. index)
+  end
+end)
+
+t.test("status rejects an exit IP cache from a different runtime generation", function()
+  local stale = fixture({
+    shared_files = {
+      [RUNTIME] = "runtime-b",
+      [EXIT_IP_CACHE] = "node=old\nconfig=" .. checksum("runtime-a") .. "\nobserved_at=999\nip=203.0.113.10\n"
+    },
+    wall_time = function() return 1000 end,
+    exit_ip = "198.51.100.3"
+  })
+  t.eq(stale.runtime:status().exit_ip, "198.51.100.3")
+  t.truthy(event_index(stale.events, "exec:exit_ip:socks:192.168.6.1:7890"))
+end)
+
+t.test("status fails closed when a dynamic runtime configuration is corrupted", function()
+  local state = fixture({
+    shared_files = { [RUNTIME] = "not-json" },
+    exit_ip = "198.51.100.4"
+  })
+  local status = state.runtime:status()
+  t.eq(status.selection_mode, "dynamic")
+  t.eq(status.selection_state, "recovery_required")
+  t.eq(status.recovery_required, true)
+  t.eq(status.exit_ip, nil)
+end)
+
+t.test("successful exit observation writes an atomic private node cache", function()
+  local state = fixture({ exit_ip = "2001:db8::9\n", wall_time = function() return 1785326499 end })
+  local status = state.runtime:status()
+  t.eq(status.exit_ip, "2001:db8::9")
+  t.eq(state.files[EXIT_IP_CACHE], "node=old\nconfig=" .. checksum("") .. "\nobserved_at=1785326499\nip=2001:db8::9\n")
+  local temporary = EXIT_IP_CACHE .. ".tmp.123"
+  t.truthy(event_index(state.events, "fs:write_temp:" .. temporary))
+  t.truthy(event_index(state.events, "fs:chmod:" .. temporary .. ":0600"))
+  t.truthy(event_index(state.events, "fs:fsync:" .. temporary))
+  t.truthy(event_index(state.events, "fs:rename:" .. temporary .. ":" .. EXIT_IP_CACHE))
+end)
+
+t.test("status drops an exit IP when the active node changes during cache commit", function()
+  local state = fixture({
+    exit_ip = "203.0.113.40",
+    cache_rename_hook = function(global) global.active_node = "new" end
+  })
+  local status = state.runtime:status()
+  t.eq(status.exit_ip, nil)
+end)
+
+t.test("fast switch logs target and verification stages", function()
+  local state = fixture({ dynamic_config = true, api_current = "xc-node-old" })
+  local value = state.runtime:fast_switch("new")
+  t.eq(value.ok, true)
+  t.contains(state.files[LOG], '"message":"fast node switch started"')
+  t.contains(state.files[LOG], '"message":"fast node switch API applied"')
+  t.contains(state.files[LOG], '"message":"fast node switch active node committed"')
+end)
+
+t.test("fast switch logs the failed stage and stable reason", function()
+  local state = fixture({
+    dynamic_config = true, api_current = "xc-node-old",
+    api_override_hook = function(tag) return tag == "xc-node-old" end
+  })
+  local value = state.runtime:fast_switch("new")
+  t.eq(value.ok, false)
+  t.eq(value.code, "fast_switch_api_failed")
+  t.contains(state.files[LOG], '"message":"fast node switch API apply failed"')
+  t.contains(state.files[LOG], '"stage":"api_apply"')
+  t.contains(state.files[LOG], '"code":"fast_switch_api_failed"')
+  t.contains(state.files[LOG], '"node":"new"')
+  t.eq(state.files[LOG]:find("password", 1, true), nil)
+end)
+
+t.test("failed exit observation without a fresh cache stays secret-safe", function()
+  for _, options in ipairs({
+    { exit_ip = "curl: password=secret body={credential}" },
+    { exit_ip_throw = true }
+  }) do
+    local state = fixture(options)
+    local status = state.runtime:status()
+    t.eq(status.ok, true)
+    t.eq(status.exit_ip, nil)
+    t.eq(state.files[EXIT_IP_CACHE], nil)
+    local encoded = stringify(status)
+    t.eq(encoded:find("curl", 1, true), nil)
+    t.eq(encoded:find("secret", 1, true), nil)
+    t.eq(encoded:find("credential", 1, true), nil)
+  end
+end)
+
+t.test("status drops exit observations when active node or runtime lock changes", function()
+  local changed_node = fixture({
+    exit_ip = "203.0.113.20",
+    observe_hook = function(global) global.active_node = "new" end
+  })
+  local status = changed_node.runtime:status()
+  t.eq(status.exit_ip, nil)
+  t.eq(changed_node.files[EXIT_IP_CACHE], nil)
+  t.truthy(event_index(changed_node.events, "fs:lock:" .. LOCK))
+  t.truthy(event_index(changed_node.events, MAIN_UNLOCK))
+
+  local changed_lock_options = { exit_ip = "203.0.113.21" }
+  changed_lock_options.lock_state = function() return changed_lock_options.busy and "held" or "unlocked" end
+  changed_lock_options.observe_hook = function() changed_lock_options.busy = true end
+  local changed_lock = fixture(changed_lock_options)
+  status = changed_lock.runtime:status()
+  t.eq(status.exit_ip, nil)
+  t.eq(changed_lock.files[EXIT_IP_CACHE], nil)
+end)
+
+t.test("exit cache commit excludes a switch starting after the final context check", function()
+  local state = fixture({ exit_ip = "203.0.113.22", cache_write_race = true })
+  local status = state.runtime:status()
+  t.eq(state.competing_switch_started, nil)
+  t.eq(state.global.active_node, "old")
+  t.eq(status.exit_ip, "203.0.113.22")
+  t.eq(state.files[EXIT_IP_CACHE], "node=old\nconfig=" .. checksum("") .. "\nobserved_at=1785326400\nip=203.0.113.22\n")
+  local locked = assert(event_index(state.events, "fs:lock:" .. LOCK))
+  local replaced = assert(event_index(state.events, "fs:rename:" .. EXIT_IP_CACHE .. ".tmp.123:" .. EXIT_IP_CACHE))
+  local unlocked = assert(event_index(state.events, MAIN_UNLOCK))
+  t.truthy(locked < replaced and replaced < unlocked)
+end)
+
+t.test("status never returns another node cache across a switch race", function()
+  local files = { [EXIT_IP_CACHE] = "node=old\nobserved_at=999\nip=203.0.113.30\n" }
+  local state = fixture({
+    shared_files = files,
+    wall_time = function() return 1000 end,
+    lock_state = function() return "unlocked" end,
+    listener_hook = function(kind, _, global)
+      if kind == "http" then global.active_node = "new" end
+    end,
+    exit_ip = nil
+  })
+  local status = state.runtime:status()
+  t.eq(status.exit_ip, nil)
+end)
+
+t.test("exit cache fails closed on a non-idle operation marker", function()
+  local files = {
+    [STATUS] = "operation=switch\ntime=1\n",
+    [EXIT_IP_CACHE] = "node=old\nobserved_at=999\nip=203.0.113.31\n"
+  }
+  local state = fixture({ shared_files = files, wall_time = function() return 1000 end })
+  local status = state.runtime:status()
+  t.eq(status.operation, "idle")
+  t.eq(status.exit_ip, nil)
+end)
+
+t.test("exit IP status accepts strict IPv4 and IPv6 forms and rejects malformed addresses", function()
+  local valid = {
+    "0.0.0.0", "255.255.255.255", "::", "::1", "2001:db8::1",
+    "2001:db8:0:1:2:3:4:5", "1:2:3:4:5:6:7:8", "1:2:3:4:5:6:7::",
+    "::1:2:3:4:5:6:7", "::ffff:192.0.2.1", "2001:db8::192.0.2.1", "1:2:3:4:5::192.0.2.1"
+  }
+  for _, address in ipairs(valid) do
+    local state = fixture({ exit_ip = address })
+    t.eq(state.runtime:status().exit_ip, address, "rejected valid address " .. address)
+  end
+  local invalid = {
+    ":::1", "1:::2", ":1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:",
+    "1:2:3:4:5:6:7", "1:2:3:4:5:6:7:8:9", "1::2::3", "2001:db8::g",
+    "1:2:3:4:5:6:7:8::", "::1:2:3:4:5:6:7:8", "1:2:3:4:5:6::192.0.2.1",
+    "::ffff:192.0.2.999", "::ffff:192.0.2", "192.0.2.1::", "2001:db8:192.0.2.1::1",
+    "01.2.3.4", "1.2.3.4.5"
+  }
+  for _, address in ipairs(invalid) do
+    local state = fixture({ exit_ip = address })
+    t.eq(state.runtime:status().exit_ip, nil, "accepted malformed address " .. address)
+  end
+end)
+
+t.test("status observes exit IP by SOCKS readiness rather than the procd query", function()
+  -- procd 的 running 查询在切换/重启窗口会挂起或超时（误报 stopped），
+  -- 但 socks 端口就绪即表示代理可用，必须继续观察出口 IP。
+  local stopped = fixture({ service_state = "stopped", exit_ip = "203.0.113.9" })
+  local status = stopped.runtime:status()
+  t.eq(status.service, "stopped")
+  t.eq(status.exit_ip, "203.0.113.9", "a ready SOCKS listener must gate exit observation, not the procd query")
+  t.truthy(event_index(stopped.events, "exec:exit_ip:socks:192.168.6.1:7890"))
+
+  local unavailable = fixture({ listener_fail = "socks", exit_ip = "203.0.113.9" })
+  status = unavailable.runtime:status()
+  t.eq(status.listeners.socks, false); t.eq(status.exit_ip, nil)
+  t.eq(event_index(unavailable.events, "exec:exit_ip:socks:192.168.6.1:7890"), nil)
+end)
+
+t.test("every runtime Xray validation receives a finite monotonic deadline", function()
+  local current = fixture({ files = { [RUNTIME] = "runtime" } })
+  t.eq(current.runtime:test_current().ok, true)
+  t.eq(current.validation_deadlines[1], 153)
+
+  local switched = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  t.eq(switched.runtime:switch("new").ok, true)
+  t.truthy(#switched.validation_deadlines >= 1)
+  for _, deadline in ipairs(switched.validation_deadlines) do t.eq(deadline, 153) end
+end)
+
+t.test("status distinguishes unset and invalid active state", function()
+  local unset = fixture({ global = { socks_port = 7890, http_port = 10809 }, nodes = { node("only", true) } })
+  t.eq(unset.runtime:status().active_state, "unset")
+  local invalid = fixture({ global = { active_node = "bad;secret", socks_port = 7890, http_port = 10809 } })
+  local status = invalid.runtime:status()
+  t.eq(status.active_state, "invalid")
+  t.eq(status.active_node, nil)
+  t.eq(stringify(status):find("bad;secret", 1, true), nil)
+end)
+
+t.test("logging redacts credentials links raw content and bounds output", function()
+  local state = fixture()
+  local link = "vless://" .. UUID .. "@secret.invalid:443?security=reality#private"
+  local result = state.runtime:log(
+    "failed " .. UUID .. " password=hunter2 TOKEN=tok-value api_key=api-value private-key=key-value -----BEGIN PRIVATE KEY----- PEMSECRET -----END PRIVATE KEY----- " .. link .. " https://sub.invalid/opaque-secret-token hysteria2://edge.invalid/share-secret {\"raw\":\"do-not-log\"}" .. string.rep("x", 5000),
+    { password = "field-secret", raw_content = "raw-field-secret", url = "https://u:p@host/path?q=secret#frag", node = "safe-node" }
+  )
+  t.eq(result.ok, true)
+  local line = state.files["/var/log/xc.log"]
+  t.truthy(#line <= 2048)
+  for _, secret in ipairs({ UUID, "hunter2", "tok-value", "api-value", "key-value", "PEMSECRET", "vless://", "hysteria2://", "secret.invalid", "sub.invalid", "edge.invalid", "opaque-secret-token", "share-secret", "do-not-log", "field-secret", "raw-field-secret", "q=secret", "u:p" }) do
+    t.eq(line:find(secret, 1, true), nil, "log leaked " .. secret)
+  end
+  t.contains(line, "safe-node")
+  t.contains(line, "[redacted]")
+end)
+
+t.test("logging enforces the total cap and fsyncs the log directory", function()
+  local state = fixture({ files = { ["/var/log/xc.log"] = string.rep("a", 262140) } })
+  local result = state.runtime:log("bounded event", { node = "safe" })
+  t.eq(result.ok, true)
+  t.truthy(#state.files["/var/log/xc.log"] <= 262144)
+  t.truthy(event_index(state.events, "fs:chmod:/var/log/xc.log.tmp.123:0600"))
+  t.truthy(event_index(state.events, "fs:fsync_dir:/var/log"))
+end)
+
+t.test("switch durably records install intent before replacing runtime", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  t.eq(state.runtime:switch("new").ok, true)
+  local intent, replace
+  for index, write in ipairs(state.writes) do
+    if write.path == TRANSACTION and write.content:find("\ninstall_intent\n", 1, true) then intent = index end
+  end
+  replace = event_index(state.events, "fs:rename:" .. XRAY_CANDIDATE .. ":" .. RUNTIME)
+  local intent_rename = event_index(state.events, "fs:rename:" .. TRANSACTION .. ".tmp.123:" .. TRANSACTION)
+  t.truthy(intent)
+  t.truthy(intent_rename < replace)
+  t.truthy(event_index(state.events, "fs:fsync_dir:/etc/xc/rollback") < replace)
+end)
+
+t.test("recover_pending restores a checksum-validated pre-UCI transaction idempotently", function()
+  local files = {
+    [RUNTIME] = "candidate-runtime",
+    ["/etc/xc/rollback/generation-123-1.config"] = "old-runtime",
+    ["/etc/xc/rollback/generation-123-1.active"] = "old",
+    [TRANSACTION] = transaction("install_intent", "old-runtime", "old", "candidate-runtime", "new")
+  }
+  local state = fixture({ shared_files = files, global = { active_node = "old", socks_port = 7890, http_port = 10809 } })
+  local first = state.runtime:recover_pending()
+  t.eq(first.ok, true)
+  t.eq(files[RUNTIME], "old-runtime")
+  local validation = "exec:run:/usr/bin/xray|run|-test|-format|json|-c|/etc/xc/rollback/generation-123-1.config"
+  t.truthy(event_index(state.events, validation) < event_index(state.events, "fs:write_temp:" .. RUNTIME .. ".tmp.123"))
+  t.eq(files[TRANSACTION], nil)
+  t.eq(state.runtime:recover_pending().ok, true)
+  t.eq(files[RUNTIME], "old-runtime")
+end)
+
+t.test("automatic preflight recovers before render mutates its output", function()
+  local files = {
+    [RUNTIME] = "candidate-runtime",
+    ["/etc/xc/rollback/generation-123-1.config"] = "old-runtime",
+    ["/etc/xc/rollback/generation-123-1.active"] = "old",
+    [TRANSACTION] = transaction("install_intent", "old-runtime", "old", "candidate-runtime", "new")
+  }
+  local state = fixture({ shared_files = files })
+  local rendered = state.runtime:render("new", "/tmp/render.json")
+  t.eq(rendered.ok, true)
+  t.eq(files[RUNTIME], "old-runtime")
+  t.truthy(event_index(state.events, "exec:restart") < event_index(state.events, "fs:write_temp:/tmp/render.json.tmp.123"))
+end)
+
+t.test("typed read failures abort switch and rollback before installation", function()
+  local switched = fixture({ files = { [RUNTIME] = "old-runtime" }, read_errors = { [RUNTIME] = "io_error" } })
+  local value = switched.runtime:switch("new")
+  t.eq(value.ok, false)
+  t.eq(switched.files[RUNTIME], "old-runtime")
+  t.eq(switched.files[XRAY_CANDIDATE], nil)
+  t.eq(event_index(switched.events, "fs:rename:" .. XRAY_CANDIDATE .. ":" .. RUNTIME), nil)
+
+  local files = merge({ [RUNTIME] = "new-runtime" }, journal("old-runtime", "old"))
+  local rolled = fixture({ files = files, read_errors = { [MANIFEST] = "too_large" } })
+  value = rolled.runtime:rollback()
+  t.eq(value.ok, false)
+  t.eq(rolled.files[RUNTIME], "new-runtime")
+  t.eq(event_index(rolled.events, "exec:restart"), nil)
+end)
+
+t.test("finalize and recovery_done converge after evidence was already removed", function()
+  for _, phase in ipairs({ "finalize", "recovery_done" }) do
+    local files = {
+      [RUNTIME] = phase == "finalize" and "candidate-runtime" or nil,
+      [TRANSACTION] = transaction(phase, "", UNSET_ACTIVE, "candidate-runtime", "new", "switch")
+    }
+    local state = fixture({ shared_files = files })
+    t.eq(state.runtime:recover_pending().ok, true)
+    t.eq(files[TRANSACTION], nil)
+    t.eq(state.runtime:recover_pending().ok, true)
+  end
+end)
+
+t.test("log rotation is serialized and retains only complete newline records", function()
+  local old = string.rep("z", 262130) .. "\ncomplete\n"
+  local state = fixture({ files = { ["/var/log/xc.log"] = old } })
+  t.eq(state.runtime:log("next", {}).ok, true)
+  t.eq(state.events[1], "fs:lock:/var/lock/xc-log.lock")
+  t.eq(state.events[#state.events], LOG_UNLOCK)
+  local value = state.files["/var/log/xc.log"]
+  t.truthy(#value <= 262144)
+  t.eq(value:sub(1, 1), "c")
+  t.eq(value:find("z", 1, true), nil)
+  t.eq(value:sub(-1), "\n")
+end)
+
+t.test("rollback rejects a preservation generation collision before overwriting evidence", function()
+  local files = merge({ [RUNTIME] = "new-runtime" }, journal("old-runtime", "old"))
+  local state = fixture({ files = files, generation = "100-1", global = { active_node = "new", socks_port = 7890, http_port = 10809 } })
+  local value = state.runtime:rollback()
+  t.eq(value.ok, false)
+  t.eq(state.files["/etc/xc/rollback/generation-100-1.config"], "old-runtime")
+  t.truthy(state.files[MANIFEST])
+  t.eq(state.files[RUNTIME], "new-runtime")
+end)
+
+t.test("scavenge refuses an invalid manifest rather than deleting possibly referenced evidence", function()
+  local files = {
+    [MANIFEST] = "corrupt-but-present\n",
+    ["/etc/xc/rollback/generation-safe.config"] = "evidence",
+    ["/etc/xc/rollback/generation-safe.active"] = "old"
+  }
+  local state = fixture({ shared_files = files, generation_files = { "generation-safe.config", "generation-safe.active" } })
+  t.eq(state.runtime:recover_pending().ok, false)
+  t.eq(files["/etc/xc/rollback/generation-safe.config"], "evidence")
+  t.eq(event_index(state.events, "fs:trash_generation:safe"), nil)
+end)
+
+t.test("logging never truncates a UTF-8 sequence", function()
+  local state = fixture()
+  t.eq(state.runtime:log(string.rep("a", 511) .. "中", {}).ok, true)
+  local value = state.files["/var/log/xc.log"]
+  t.truthy(valid_utf8(value))
+end)
+
+t.test("phase recovery converges across instances before and after UCI commit", function()
+  for _, phase in ipairs({ "install_intent", "candidate_healthy", "recovery_intent", "uci_committed", "cleanup_pending" }) do
+    local files = {
+      [RUNTIME] = "candidate-runtime",
+      ["/etc/xc/rollback/generation-123-1.config"] = "old-runtime",
+      ["/etc/xc/rollback/generation-123-1.active"] = "old",
+      [TRANSACTION] = transaction(phase, "old-runtime", "old", "candidate-runtime", "new")
+    }
+    if phase == "cleanup_pending" then
+      files[MANIFEST] = journal("old-runtime", "old", "123-1")[MANIFEST]
+    end
+    local committed = phase == "uci_committed" or phase == "cleanup_pending"
+    local global = { active_node = committed and "new" or "old", socks_port = 7890, http_port = 10809 }
+    local first = fixture({ shared_files = files, global = global })
+    t.eq(first.runtime:recover_pending().ok, true, phase)
+    t.eq(files[RUNTIME], committed and "candidate-runtime" or "old-runtime", phase)
+    local second = fixture({ shared_files = files, global = global })
+    t.eq(second.runtime:recover_pending().ok, true, phase)
+    t.eq(files[TRANSACTION], nil, phase)
+  end
+end)
+
+t.test("cleanup interruption leaves a valid new manifest and retryable cleanup_pending", function()
+  local files = merge({ [RUNTIME] = "runtime-B" }, journal("runtime-A", "A"))
+  local global = { active_node = "B", socks_port = 7890, http_port = 10809 }
+  local first = fixture({
+    shared_files = files, global = global, delete_trash_ok = false,
+    nodes = { node("A", true), node("B", true), node("C", true) }
+  })
+  t.eq(first.runtime:switch("C").ok, false)
+  t.truthy(files[MANIFEST])
+  t.contains(files[TRANSACTION], "\ncleanup_pending\n")
+  t.eq(files["/etc/xc/rollback/generation-123-1.config"], "runtime-B")
+
+  local second = fixture({ shared_files = files, global = global })
+  t.eq(second.runtime:recover_pending().ok, true)
+  t.eq(files[TRANSACTION], nil)
+  t.truthy(files[MANIFEST])
+  t.eq(files["/etc/xc/rollback/generation-123-1.config"], "runtime-B")
+  t.eq(files["/etc/xc/rollback/generation-100-1.config"], nil)
+end)
+
+t.test("readiness checks the deadline after a failed real connection", function()
+  local clock = 0
+  local state = fixture({
+    files = { [RUNTIME] = "old-runtime" }, health_failures = { socks = 1 },
+    now = function() return clock end,
+    health_hook = function(kind, deadline)
+      if kind == "socks" and clock == 0 then clock = deadline end
+    end
+  })
+  local value = state.runtime:switch("new")
+  t.eq(value.code, "health_failed")
+  t.eq(event_index(state.events, "uci:set_active:new"), nil)
+end)
+
+t.test("status constrains lock state and marks stale operation with a transaction as interrupted", function()
+  local files = {
+    ["/var/run/xc-status"] = "operation=switch\ntime=1\n",
+    [TRANSACTION] = transaction("install_intent", "old-runtime", "old", "candidate-runtime", "new")
+  }
+  local state = fixture({ shared_files = files })
+  local status = state.runtime:status()
+  t.eq(status.lock, "unlocked")
+  t.eq(status.operation, "interrupted")
+  t.eq(status.recovery_required, true)
+end)
+
+t.test("status reports a pending transaction even when shared operation is idle", function()
+  local files = {
+    ["/var/run/xc-status"] = "operation=idle\nlast_error=recovery_failed\n",
+    [TRANSACTION] = transaction("recovery_intent", "old-runtime", "old", "candidate-runtime", "new")
+  }
+  local status = fixture({ shared_files = files }).runtime:status()
+  t.eq(status.operation, "interrupted")
+  t.eq(status.recovery_required, true)
+end)
+
+t.test("recovery typed-read failures stop the uncertain candidate service", function()
+  local files = { [RUNTIME] = "candidate-runtime", [TRANSACTION] = "opaque" }
+  local state = fixture({ shared_files = files, read_errors = { [TRANSACTION] = "io_error" } })
+  t.eq(state.runtime:recover_pending().code, "recovery_failed")
+  t.truthy(event_index(state.events, "exec:stop"))
+end)
+
+t.test("switch records cleanup_pending before publishing the new manifest", function()
+  local state = fixture({ files = { [RUNTIME] = "old-runtime" } })
+  t.eq(state.runtime:switch("new").ok, true)
+  local cleanup_write, manifest_write
+  for index, write in ipairs(state.writes) do
+    if write.path == TRANSACTION and write.content:find("\ncleanup_pending\n", 1, true) then cleanup_write = index end
+    if write.path == MANIFEST then manifest_write = index end
+  end
+  t.truthy(cleanup_write < manifest_write)
+end)
+
+t.test("phase transitions cannot confuse a generation token with the phase field", function()
+  local files = {
+    [RUNTIME] = "candidate-runtime",
+    ["/etc/xc/rollback/generation-install_intent.config"] = "old-runtime",
+    ["/etc/xc/rollback/generation-install_intent.active"] = "old",
+    [TRANSACTION] = transaction("install_intent", "old-runtime", "old", "candidate-runtime", "new", "switch", "install_intent")
+  }
+  local state = fixture({ shared_files = files })
+  t.eq(state.runtime:recover_pending().ok, true)
+  local recovery_write
+  for _, write in ipairs(state.writes) do
+    if write.path == TRANSACTION and write.content:find("recovery_intent", 1, true) then recovery_write = write.content; break end
+  end
+  local version, token, kind, phase = recovery_write:match("^([^\n]+)\n([^\n]+)\n([^\n]+)\n([^\n]+)\n")
+  t.eq(version, "xc-transaction-v2")
+  t.eq(token, "install_intent")
+  t.eq(kind, "switch")
+  t.eq(phase, "recovery_intent")
+  t.eq(files[TRANSACTION], nil)
+  t.eq(files[RUNTIME], "old-runtime")
+end)
+
+t.test("scavenge retries deterministic trash deletion across runtime instances", function()
+  local files = {
+    ["/etc/xc/rollback/generation-orphan.config"] = "orphan-config",
+    ["/etc/xc/rollback/generation-orphan.active"] = "old"
+  }
+  local first = fixture({
+    shared_files = files,
+    generation_files = { "generation-orphan.config", "generation-orphan.active" },
+    delete_trash_ok = false
+  })
+  t.eq(first.runtime:recover_pending().code, "recovery_failed")
+  t.eq(files["/etc/xc/rollback/generation-orphan.config"], nil)
+  t.eq(files["/etc/xc/rollback/.trash-orphan.config"], "orphan-config")
+
+  local second = fixture({
+    shared_files = files,
+    generation_files = { ".trash-orphan.config", ".trash-orphan.active" }
+  })
+  t.eq(second.runtime:recover_pending().ok, true)
+  t.eq(files["/etc/xc/rollback/.trash-orphan.config"], nil)
+  t.eq(files["/etc/xc/rollback/.trash-orphan.active"], nil)
+  t.truthy(event_index(second.events, "fs:delete_trashed_generation:orphan"))
+end)
+
+t.test("scavenge ignores malformed trash names and propagates post-transaction cleanup failure", function()
+  local unrelated = "/etc/xc/rollback/.trash-../outside.config"
+  local files = {
+    [unrelated] = "untouched",
+    ["/etc/xc/rollback/generation-orphan.config"] = "orphan-config",
+    ["/etc/xc/rollback/generation-orphan.active"] = "old",
+    ["/etc/xc/rollback/generation-123-1.config"] = "old-runtime",
+    ["/etc/xc/rollback/generation-123-1.active"] = "old",
+    [TRANSACTION] = transaction("finalize", "old-runtime", "old", "candidate-runtime", "new")
+  }
+  local state = fixture({
+    shared_files = files,
+    generation_files = { ".trash-../outside.config", ".trash-bad!.active", "generation-orphan.config", "generation-orphan.active" },
+    delete_trash_ok = false
+  })
+  t.eq(state.runtime:recover_pending().code, "recovery_failed")
+  t.eq(files[unrelated], "untouched")
+  t.eq(event_index(state.events, "fs:delete_trashed_generation:../outside"), nil)
+end)
+
+return true

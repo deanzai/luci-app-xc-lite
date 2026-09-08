@@ -10,9 +10,13 @@ local PREV_CURRENT = ROOT .. "/current.previous"
 local SETTINGS_FILE = ROOT .. "/settings.json"
 local DEFAULT_SETTINGS = {
     listen_host = "127.0.0.1",
+    socks_host = "127.0.0.1",
+    socks_port = 7890,
+    http_host = "127.0.0.1",
+    http_port = 10809,
     proxy_host = "127.0.0.1",
     probe_url = "http://www.gstatic.com/generate_204",
-    health_url = "https://api.ipify.org"
+    health_url = "http://www.gstatic.com/generate_204"
 }
 
 local function read(path)
@@ -136,10 +140,12 @@ local function make_outbound(node, tag)
 end
 
 local function make_config(node, socks_port, http_port)
-    socks_port = socks_port or 7890
-    http_port = http_port or 10809
+    local s_host = setting("socks_host") or setting("listen_host")
+    local s_port = tonumber(socks_port or setting("socks_port") or 7890)
+    local h_host = setting("http_host") or setting("listen_host")
+    local h_port = tonumber(http_port or setting("http_port") or 10809)
     local selected = make_outbound(node, "proxy-selected")
-    local fixed = make_outbound(node._fixed_proxy, "proxy")
+    local fixed = make_outbound(node._fixed_proxy or node, "proxy")
     return {
         log = {loglevel = "warning"},
         dns = {
@@ -155,16 +161,16 @@ local function make_config(node, socks_port, http_port)
         inbounds = {
             {
                 tag = "socks-in",
-                listen = setting("listen_host"),
-                port = socks_port,
+                listen = s_host,
+                port = s_port,
                 protocol = "socks",
                 settings = {auth = "noauth", udp = true},
                 sniffing = {enabled = true, destOverride = {"http", "tls", "quic"}, routeOnly = true}
             },
             {
                 tag = "http-in",
-                listen = setting("listen_host"),
-                port = http_port,
+                listen = h_host,
+                port = h_port,
                 protocol = "http",
                 sniffing = {enabled = true, destOverride = {"http", "tls", "quic"}, routeOnly = true}
             }
@@ -193,7 +199,11 @@ local function make_config(node, socks_port, http_port)
 end
 
 local function make_config_for(nodes, node, socks_port, http_port)
-    node._fixed_proxy = find_node(nodes, nodes.fixed_proxy_id) or node
+    local fixed = nil
+    if nodes and nodes.fixed_proxy_id then
+        fixed = find_node(nodes, nodes.fixed_proxy_id)
+    end
+    node._fixed_proxy = fixed or node
     return make_config(node, socks_port, http_port)
 end
 
@@ -278,10 +288,11 @@ local function select_node(id)
         os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
         return false, "service restart failed"
     end
+    local s_port = tonumber(setting("socks_port") or 7890)
     local ok = false
     for _ = 1, 25 do
         sleep(1)
-        if check_port_listening(7890) and run("curl --silent --show-error --max-time 3 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":7890 " .. setting("health_url") .. " >/dev/null 2>&1") then
+        if check_port_listening(s_port) and run("curl --silent --show-error --max-time 3 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":" .. tostring(s_port) .. " " .. setting("health_url") .. " >/dev/null 2>&1") then
             ok = true
             break
         end
@@ -300,9 +311,11 @@ local function select_node(id)
 end
 
 local function test_current()
-    local socks = run("curl --silent --show-error --max-time 15 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":7890 " .. setting("health_url") .. " >/dev/null 2>&1")
-    local http = run("curl --silent --show-error --max-time 15 -o /dev/null --proxy http://" .. setting("proxy_host") .. ":10809 " .. setting("health_url") .. " >/dev/null 2>&1")
-    io.write("socks7890=" .. (socks and "ok" or "fail") .. " http10809=" .. (http and "ok" or "fail") .. "\n")
+    local s_port = tonumber(setting("socks_port") or 7890)
+    local h_port = tonumber(setting("http_port") or 10809)
+    local socks = run("curl --silent --show-error --max-time 15 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":" .. tostring(s_port) .. " " .. setting("health_url") .. " >/dev/null 2>&1")
+    local http = run("curl --silent --show-error --max-time 15 -o /dev/null --proxy http://" .. setting("proxy_host") .. ":" .. tostring(h_port) .. " " .. setting("health_url") .. " >/dev/null 2>&1")
+    io.write(string.format("socks%d=%s http%d=%s\n", s_port, socks and "ok" or "fail", h_port, http and "ok" or "fail"))
     return socks, http
 end
 
@@ -332,14 +345,22 @@ elseif command == "status" then
     if p then p:close() end
     local cur_id = current_id()
     local cur_node = cur_id and find_node(data, cur_id)
+    local s_port = tonumber(setting("socks_port") or 7890)
+    local h_port = tonumber(setting("http_port") or 10809)
+    local s_host = setting("socks_host") or setting("listen_host")
+    local h_host = setting("http_host") or setting("listen_host")
     local status = {
         running = pid ~= nil,
         pid = pid,
         current_id = cur_id,
         current_node = cur_node,
         fixed_proxy_id = data.fixed_proxy_id,
-        socks_listening = check_port_listening(7890),
-        http_listening = check_port_listening(10809)
+        socks_host = s_host,
+        socks_port = s_port,
+        http_host = h_host,
+        http_port = h_port,
+        socks_listening = check_port_listening(s_port),
+        http_listening = check_port_listening(h_port)
     }
     io.write(json.stringify(status, 1) .. "\n")
 elseif command == "probe" then

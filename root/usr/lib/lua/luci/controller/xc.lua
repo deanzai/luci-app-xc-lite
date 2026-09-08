@@ -51,8 +51,8 @@ function act_probe_node()
 end
 
 function act_save_node()
-    local node_str = luci.http.formvalue("node") or luci.http.content()
-    call_rpcd("save_node", string.format('{"node":%s}', node_str))
+    local content = luci.http.content() or "{}"
+    call_rpcd("save_node", content)
 end
 
 function act_delete_node()

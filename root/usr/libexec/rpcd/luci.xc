@@ -79,7 +79,10 @@ local methods = {
     end,
 
     save_node = function(params)
-        local node = params.node
+        local node = (params and params.node) or params
+        if type(node) == "table" and node.node then
+            node = node.node
+        end
         if not node or not node.id or not node.name then
             output_json({ code = 1, message = "invalid node parameters" })
             return
@@ -152,9 +155,13 @@ local methods = {
         local ok, data = pcall(json.parse, raw or "")
         local defaults = {
             listen_host = "127.0.0.1",
+            socks_host = "127.0.0.1",
+            socks_port = 7890,
+            http_host = "127.0.0.1",
+            http_port = 10809,
             proxy_host = "127.0.0.1",
             probe_url = "http://www.gstatic.com/generate_204",
-            health_url = "https://api.ipify.org"
+            health_url = "http://www.gstatic.com/generate_204"
         }
         if ok and type(data) == "table" then
             for k, v in pairs(defaults) do
@@ -167,7 +174,10 @@ local methods = {
     end,
 
     save_settings = function(params)
-        local settings = params.settings or {}
+        local settings = (params and params.settings) or params or {}
+        if type(settings) == "table" and settings.settings then
+            settings = settings.settings
+        end
         local raw = read_file(SETTINGS_FILE)
         local ok, data = pcall(json.parse, raw or "")
         if not ok or type(data) ~= "table" then data = {} end

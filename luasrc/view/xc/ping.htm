@@ -1,0 +1,9 @@
+<%
+local util = require "luci.util"
+local cached = self:cfgvalue(section)
+local socket = cached and cached.socket or nil
+-%>
+<div class="xc-probe-row" data-xc-section="<%=util.pcdata(section)%>">
+  <span class="xc-socket"><%=socket == "ok" and "✓" or (socket == "fail" and "✗" or "--")%></span>
+  <input type="button" class="cbi-button cbi-button-apply xc-probe-one" value="<%:Test%>" />
+</div>

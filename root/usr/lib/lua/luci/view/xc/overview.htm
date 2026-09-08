@@ -93,45 +93,76 @@
 
     <!-- 全局参数配置 -->
     <fieldset class="cbi-section">
-        <legend><%=translate("全局运行参数 (/etc/xc/settings.json)")%></legend>
+        <legend><%=translate("全局运行参数与代理接口设定 (/etc/xc/settings.json)")%></legend>
         <form id="form-settings" onsubmit="doSaveSettings(event)">
             <div class="cbi-section-node">
+                <!-- SOCKS5 代理接口单独设定 -->
                 <div class="cbi-value">
-                    <label class="cbi-value-title"><%=translate("监听绑定地址 (listen_host)")%></label>
+                    <label class="cbi-value-title"><strong><%=translate("SOCKS5 代理接口")%></strong></label>
                     <div class="cbi-value-field">
-                        <input type="text" id="setting-listen-host" class="cbi-input-text" style="width:320px;">
-                        <div class="cbi-value-description"><%=translate("默认 127.0.0.1 仅限本机；局域网共享请填 0.0.0.0 或路由器 LAN IP")%></div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
+                                <input type="text" id="setting-socks-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
+                                <input type="number" id="setting-socks-port" class="cbi-input-text" style="width:100px;" placeholder="7890">
+                            </div>
+                        </div>
+                        <div class="cbi-value-description"><%=translate("支持 TCP/UDP，客户端需配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。")%></div>
                     </div>
                 </div>
+
+                <!-- HTTP 代理接口单独设定 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><strong><%=translate("HTTP 代理接口")%></strong></label>
+                    <div class="cbi-value-field">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
+                                <input type="text" id="setting-http-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
+                                <input type="number" id="setting-http-port" class="cbi-input-text" style="width:100px;" placeholder="10809">
+                            </div>
+                        </div>
+                        <div class="cbi-value-description"><%=translate("供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。")%></div>
+                    </div>
+                </div>
+
+                <!-- 探测与目标设置 -->
                 <div class="cbi-value">
                     <label class="cbi-value-title"><%=translate("健康测试代理地址 (proxy_host)")%></label>
                     <div class="cbi-value-field">
-                        <input type="text" id="setting-proxy-host" class="cbi-input-text" style="width:320px;">
+                        <input type="text" id="setting-proxy-host" class="cbi-input-text" style="width:300px;">
                     </div>
                 </div>
                 <div class="cbi-value">
                     <label class="cbi-value-title"><%=translate("延迟测速 URL (probe_url)")%></label>
                     <div class="cbi-value-field">
-                        <input type="text" id="setting-probe-url" class="cbi-input-text" style="width:320px;">
+                        <input type="text" id="setting-probe-url" class="cbi-input-text" style="width:300px;">
                     </div>
                 </div>
                 <div class="cbi-value">
                     <label class="cbi-value-title"><%=translate("出口连通性 URL (health_url)")%></label>
                     <div class="cbi-value-field">
-                        <input type="text" id="setting-health-url" class="cbi-input-text" style="width:320px;">
+                        <input type="text" id="setting-health-url" class="cbi-input-text" style="width:300px;">
                     </div>
                 </div>
                 <div class="cbi-value">
                     <label class="cbi-value-title"><%=translate("固定分流节点 (fixed_proxy_id)")%></label>
                     <div class="cbi-value-field">
-                        <select id="setting-fixed-id" class="cbi-input-select" style="width:320px;"></select>
+                        <select id="setting-fixed-id" class="cbi-input-select" style="width:300px;"></select>
+                        <div class="cbi-value-description"><%=translate("固定承担 OpenAI, YouTube, Google 等 geosite 访问的节点。")%></div>
                     </div>
                 </div>
                 <div class="cbi-value">
                     <label class="cbi-value-title"></label>
                     <div class="cbi-value-field">
                         <button type="submit" class="cbi-button cbi-button-save"><%=translate("保存并应用全局设置")%></button>
-                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存")%></span>
+                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存生效")%></span>
                     </div>
                 </div>
             </div>
@@ -275,17 +306,27 @@ function renderStatus() {
     var curNode = nodes.find(function(n) { return Number(n.id) === Number(st.current_id); });
     var fixedNode = nodes.find(function(n) { return Number(n.id) === Number(appData.nodesData.fixed_proxy_id); });
 
-    document.getElementById("stat-current-node").innerText = curNode 
-        ? ("#" + curNode.id + " " + curNode.name + " (" + curNode.type + ")") 
-        : "<%=translate('未选择')%>";
+    if (nodes.length === 0) {
+        document.getElementById("stat-current-node").innerText = "<%=translate('未选择 (节点列表为空)')%>";
+        document.getElementById("stat-fixed-node").innerText = "<%=translate('未配置')%>";
+    } else {
+        document.getElementById("stat-current-node").innerText = curNode 
+            ? ("#" + curNode.id + " " + curNode.name + " (" + curNode.type + ")") 
+            : "<%=translate('未选择')%>";
 
-    document.getElementById("stat-fixed-node").innerText = fixedNode 
-        ? ("#" + fixedNode.id + " " + fixedNode.name) 
-        : ("ID: " + (appData.nodesData.fixed_proxy_id || 1));
+        document.getElementById("stat-fixed-node").innerText = fixedNode 
+            ? ("#" + fixedNode.id + " " + fixedNode.name) 
+            : ("ID: " + (appData.nodesData.fixed_proxy_id || "<%=translate('未指定')%>"));
+    }
 
-    var socks = st.socks_listening ? "<span style='color:#10b981;'><%=translate('正常')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
-    var http = st.http_listening ? "<span style='color:#10b981;'><%=translate('正常')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
-    document.getElementById("stat-ports-info").innerHTML = "SOCKS5h: 7890 (" + socks + ") | HTTP: 10809 (" + http + ") | DoH: 1.1.1.1 (<%=translate('防泄露')%>)";
+    var sPort = st.socks_port || (appData.settings && appData.settings.socks_port) || 7890;
+    var hPort = st.http_port || (appData.settings && appData.settings.http_port) || 10809;
+    var sHost = st.socks_host || (appData.settings && appData.settings.socks_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
+    var hHost = st.http_host || (appData.settings && appData.settings.http_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
+
+    var socks = st.socks_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
+    var http = st.http_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
+    document.getElementById("stat-ports-info").innerHTML = "SOCKS5: <strong>" + sHost + ":" + sPort + "</strong> (" + socks + ") | HTTP: <strong>" + hHost + ":" + hPort + "</strong> (" + http + ") | DoH: 1.1.1.1 (<%=translate('防泄露')%>)";
 }
 
 function renderNodes() {
@@ -296,7 +337,7 @@ function renderNodes() {
     var fixedId = appData.nodesData.fixed_proxy_id;
 
     if (nodes.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:15px;"><%=translate("暂无节点，请点击上方按钮添加节点。")%></td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:25px; color:#888; font-size:13px;"><%=translate("暂无节点信息，请点击上方「+ 添加节点信息」按钮手动添加节点。")%></td></tr>';
         return;
     }
 
@@ -342,7 +383,11 @@ function renderNodes() {
 
 function renderSettings() {
     var s = appData.settings || {};
-    document.getElementById("setting-listen-host").value = s.listen_host || "127.0.0.1";
+    document.getElementById("setting-socks-host").value = s.socks_host || s.listen_host || "127.0.0.1";
+    document.getElementById("setting-socks-port").value = s.socks_port || 7890;
+    document.getElementById("setting-http-host").value = s.http_host || s.listen_host || "127.0.0.1";
+    document.getElementById("setting-http-port").value = s.http_port || 10809;
+
     document.getElementById("setting-proxy-host").value = s.proxy_host || "127.0.0.1";
     document.getElementById("setting-probe-url").value = s.probe_url || "http://www.gstatic.com/generate_204";
     document.getElementById("setting-health-url").value = s.health_url || "http://www.gstatic.com/generate_204";
@@ -350,13 +395,20 @@ function renderSettings() {
     var sel = document.getElementById("setting-fixed-id");
     sel.innerHTML = "";
     var nodes = appData.nodesData.nodes || [];
-    nodes.forEach(function(n) {
+    if (nodes.length === 0) {
         var opt = document.createElement("option");
-        opt.value = n.id;
-        opt.text = "#" + n.id + " " + n.name + " (" + n.type + ")";
-        if (Number(n.id) === Number(appData.nodesData.fixed_proxy_id)) opt.selected = true;
+        opt.value = "";
+        opt.text = "<%=translate('暂无可用节点')%>";
         sel.appendChild(opt);
-    });
+    } else {
+        nodes.forEach(function(n) {
+            var opt = document.createElement("option");
+            opt.value = n.id;
+            opt.text = "#" + n.id + " " + n.name + " (" + n.type + ")";
+            if (Number(n.id) === Number(appData.nodesData.fixed_proxy_id)) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    }
 }
 
 // 需求 1: 手动切换指定节点
@@ -420,7 +472,9 @@ function doRefreshAllSpeed() {
 }
 
 function doTestHealth() {
-    alert("<%=translate('开始测试 SOCKS5h:7890 与 HTTP:10809 出口连通性，请稍候...')%>");
+    var sPort = (appData.status && appData.status.socks_port) || (appData.settings && appData.settings.socks_port) || 7890;
+    var hPort = (appData.status && appData.status.http_port) || (appData.settings && appData.settings.http_port) || 10809;
+    alert("<%=translate('开始测试 SOCKS5h:')%>" + sPort + " <%=translate('与 HTTP:')%>" + hPort + " <%=translate('出口连通性，请稍候...')%>");
     fetch(BASE_URL + "/test_health").then(function(r) { return r.json(); }).then(function(res) {
         if (res && res.code === 0) {
             alert("<%=translate('出口健康检查通过！双端口访问正常。')%>\n" + res.message);
@@ -525,11 +579,11 @@ function doSaveNode(ev) {
         node.flow = document.getElementById("form-flow").value;
     }
 
-    var body = "node=" + encodeURIComponent(JSON.stringify(node));
+    var payload = { node: node };
     fetch(BASE_URL + "/save_node", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: body
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
     }).then(function(r) { return r.json(); }).then(function(res) {
         if (res && res.code === 0) {
             closeModal();
@@ -555,7 +609,10 @@ function doSaveSettings(ev) {
     ev.preventDefault();
     var payload = {
         settings: {
-            listen_host: document.getElementById("setting-listen-host").value.trim(),
+            socks_host: document.getElementById("setting-socks-host").value.trim(),
+            socks_port: Number(document.getElementById("setting-socks-port").value.trim()),
+            http_host: document.getElementById("setting-http-host").value.trim(),
+            http_port: Number(document.getElementById("setting-http-port").value.trim()),
             proxy_host: document.getElementById("setting-proxy-host").value.trim(),
             probe_url: document.getElementById("setting-probe-url").value.trim(),
             health_url: document.getElementById("setting-health-url").value.trim()

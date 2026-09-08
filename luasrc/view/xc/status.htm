@@ -1,0 +1,218 @@
+<%
+local dispatcher = require "luci.dispatcher"
+local util = require "luci.util"
+local version = require "xc.version"
+%>
+
+<div class="cbi-section">
+  <h3><%:Runtime status%></h3>
+  <div class="table">
+    <div class="tr"><div class="td left" width="33%"><%:Plugin version%></div><div class="td left" id="xc-plugin-version"><%=version.display%></div></div>
+    <div class="tr"><div class="td left" width="33%"><%:Service%></div><div class="td left" id="xc-service-state"><em><%:Loading…%></em></div></div>
+    <div class="tr"><div class="td left"><%:Active node%></div><div class="td left" id="xc-active-node">-</div></div>
+    <div class="tr"><div class="td left"><%:SOCKS listener%></div><div class="td left" id="xc-socks-listener">-</div></div>
+    <div class="tr"><div class="td left"><%:HTTP listener%></div><div class="td left" id="xc-http-listener">-</div></div>
+    <div class="tr"><div class="td left"><%:Exit IP%></div><div class="td left" id="xc-exit-ip">-</div></div>
+  </div>
+  <div class="cbi-page-actions">
+    <button type="button" class="btn cbi-button cbi-button-apply" id="xc-restart"><%:Restart service%></button>
+    <button type="button" class="btn cbi-button cbi-button-reset" id="xc-recover"><%:Recover runtime%></button>
+    <button type="button" class="btn cbi-button cbi-button-action" id="xc-health"><%:Test current connection%></button>
+    <button type="button" class="btn cbi-button cbi-button-reset" id="xc-rollback"><%:Manual rollback%></button>
+  </div>
+  <p id="xc-action-result" role="status"></p>
+</div>
+
+<style type="text/css">
+#xc-service-state { white-space: nowrap; }
+</style>
+
+<script type="text/javascript">
+//<![CDATA[
+(function() {
+  "use strict";
+
+  var statusUrl = "<%=dispatcher.build_url("admin", "services", "xc", "status")%>";
+  var restartUrl = "<%=dispatcher.build_url("admin", "services", "xc", "restart-service")%>";
+  var recoverUrl = "<%=dispatcher.build_url("admin", "services", "xc", "recover-service")%>";
+  var testCurrentUrl = "<%=dispatcher.build_url("admin", "services", "xc", "test-current")%>";
+  var rollbackUrl = "<%=dispatcher.build_url("admin", "services", "xc", "rollback")%>";
+  var csrfToken = "<%=token%>";
+  var unavailableText = <%=util.serialize_json(translate("Unavailable"))%>;
+  var runningText = <%=util.serialize_json(translate("Running"))%>;
+  var stoppedText = <%=util.serialize_json(translate("Stopped"))%>;
+  var errorText = <%=util.serialize_json(translate("Error"))%>;
+  var statusFailedText = <%=util.serialize_json(translate("Status request failed"))%>;
+  var invalidResponseText = <%=util.serialize_json(translate("Invalid server response"))%>;
+  var workingText = <%=util.serialize_json(translate("Working…"))%>;
+  var operationCompletedText = <%=util.serialize_json(translate("Operation completed"))%>;
+  var operationFailedText = <%=util.serialize_json(translate("Operation failed"))%>;
+  var recoveryText = <%=util.serialize_json(translate("Recovery required"))%>;
+  var pollTimer = null;
+  var statusRequest = null;
+  var activeSection = null;
+  var actionBusy = false;
+  var awaitingRefresh = false;
+  var pendingOperation = false;
+  var operationObserved = false;
+  var recoveryAvailable = false;
+  var statusGeneration = 0;
+
+  function element(id) { return document.getElementById(id); }
+  function text(id, value) { element(id).textContent = value == null || value === "" ? "-" : String(value); }
+  function endpoint(address, port) {
+    if (!address || !port) return "-";
+    return (String(address).indexOf(":") !== -1 ? "[" + address + "]" : address) + ":" + port;
+  }
+
+  function setButtons(disabled, allowRecovery) {
+    element("xc-restart").disabled = disabled || !activeSection;
+    element("xc-recover").disabled = disabled && !allowRecovery || !recoveryAvailable;
+    element("xc-health").disabled = disabled || !activeSection;
+    element("xc-rollback").disabled = disabled;
+  }
+
+  function renderStatus(response) {
+    if (!response || response.ok !== true || !response.data) {
+      text("xc-service-state", errorText);
+      text("xc-action-result", response && response.code === "invalid_response" ? invalidResponseText : statusFailedText);
+      activeSection = null;
+      recoveryAvailable = false;
+      setButtons(actionBusy);
+      return;
+    }
+    var data = response.data;
+    var state = data.service_state;
+    text("xc-service-state", state === "running" ? runningText : (state === "stopped" ? stoppedText : errorText));
+    activeSection = data.active_section || null;
+    recoveryAvailable = data.recovery_required === true || state === "stopped" || state === "error";
+    text("xc-active-node", data.active_name || activeSection);
+    text("xc-socks-listener", endpoint(data.listen_ip, data.socks_port));
+    text("xc-http-listener", endpoint(data.listen_ip, data.http_port));
+    text("xc-exit-ip", data.exit_ip || unavailableText);
+    var operation = data.operation || "idle";
+    var activeOperation = operation !== "idle" || data.recovery_required === true;
+    if (data.recovery_required === true) {
+      pendingOperation = false;
+      operationObserved = false;
+      actionBusy = false;
+      text("xc-action-result", data.last_error || recoveryText);
+    } else if (activeOperation) {
+      if (pendingOperation) operationObserved = true;
+      actionBusy = true;
+      text("xc-action-result", data.last_error || workingText);
+    } else if (pendingOperation) {
+      if (operationObserved || data.last_error) {
+        pendingOperation = false;
+        operationObserved = false;
+        actionBusy = false;
+        text("xc-action-result", data.last_error ? operationFailedText : operationCompletedText);
+      } else {
+        actionBusy = true;
+        text("xc-action-result", workingText);
+      }
+    } else if (data.last_error) {
+      text("xc-action-result", errorText);
+    }
+    setButtons(actionBusy || activeOperation || data.lock_state === "held", data.recovery_required === true);
+  }
+
+  function parseResponse(xhr) {
+    try { return JSON.parse(xhr.responseText || "{}"); }
+    catch (error) { return { ok: false, code: "invalid_response" }; }
+  }
+
+  function schedulePoll() {
+    if (pollTimer !== null) window.clearTimeout(pollTimer);
+    pollTimer = null;
+    if (!document.hidden) pollTimer = window.setTimeout(pollStatus, 5000);
+  }
+
+  function pollStatus(force) {
+    if (document.hidden) { if (force) awaitingRefresh = true; schedulePoll(); return; }
+    if (statusRequest !== null) {
+      if (!force) { schedulePoll(); return; }
+      statusGeneration += 1;
+      var stale = statusRequest;
+      statusRequest = null;
+      stale.onreadystatechange = null;
+      stale.abort();
+    }
+    var xhr = new XMLHttpRequest();
+    var generation = ++statusGeneration;
+    statusRequest = xhr;
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      if (generation !== statusGeneration || statusRequest !== xhr) return;
+      statusRequest = null;
+      if (awaitingRefresh) {
+        awaitingRefresh = false;
+        if (!pendingOperation) actionBusy = false;
+      }
+      renderStatus(parseResponse(xhr));
+      schedulePoll();
+    };
+    var separator = statusUrl.indexOf("?") === -1 ? "?" : "&";
+    xhr.open("GET", statusUrl + separator + "_=" + String(Date.now()), true);
+    xhr.send(null);
+  }
+
+  function mutation(url, payload, callback) {
+    if (actionBusy) return;
+    actionBusy = true;
+    setButtons(true);
+    text("xc-action-result", workingText);
+    var xhr = new XMLHttpRequest();
+    var separator = url.indexOf("?") === -1 ? "?" : "&";
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return;
+      var data = parseResponse(xhr);
+      var resultCode = data.code || (data.data && data.data.code);
+      if (resultCode === "switch_started" || resultCode === "operation_started") {
+        pendingOperation = true;
+        operationObserved = false;
+        text("xc-action-result", workingText);
+      } else if (data.ok === true) {
+        text("xc-action-result", operationCompletedText);
+      } else {
+        text("xc-action-result", data.message || operationFailedText);
+      }
+      if (callback) callback(data);
+      awaitingRefresh = true;
+      pollStatus(true);
+    };
+    xhr.open("POST", url + separator + "token=" + encodeURIComponent(csrfToken), true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.send(JSON.stringify(payload || {}));
+  }
+
+  element("xc-restart").onclick = function() {
+    mutation(restartUrl, {});
+  };
+  element("xc-recover").onclick = function() { mutation(recoverUrl, {}); };
+  element("xc-health").onclick = function() {
+    if (activeSection) mutation(testCurrentUrl, {});
+  };
+  element("xc-rollback").onclick = function() { mutation(rollbackUrl, {}); };
+
+  document.addEventListener("visibilitychange", function() {
+    if (document.hidden) {
+      if (pollTimer !== null) window.clearTimeout(pollTimer);
+      pollTimer = null;
+      if (statusRequest !== null) {
+        statusGeneration += 1;
+        var stale = statusRequest;
+        statusRequest = null;
+        stale.onreadystatechange = null;
+        stale.abort();
+      }
+    } else {
+      pollStatus(awaitingRefresh);
+    }
+  });
+
+  setButtons(true);
+  pollStatus();
+}());
+//]]>
+</script>

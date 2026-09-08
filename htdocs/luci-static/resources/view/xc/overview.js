@@ -87,8 +87,13 @@ return view.extend({
 		var curNode = nodes.find(function(n) { return Number(n.id) === Number(curId); });
 		var fixedNode = nodes.find(function(n) { return Number(n.id) === Number(fixedId); });
 
-		var curText = curNode ? ('#' + curNode.id + ' ' + curNode.name + ' (' + curNode.type + ')') : _('未选择');
-		var fixedText = fixedNode ? ('#' + fixedNode.id + ' ' + fixedNode.name) : ('ID: ' + fixedId);
+		var curText = nodes.length === 0 ? _('未选择 (节点列表为空)') : (curNode ? ('#' + curNode.id + ' ' + curNode.name + ' (' + curNode.type + ')') : _('未选择'));
+		var fixedText = nodes.length === 0 ? _('未配置') : (fixedNode ? ('#' + fixedNode.id + ' ' + fixedNode.name) : ('ID: ' + fixedId));
+
+		var sPort = (status && status.socks_port) || 7890;
+		var hPort = (status && status.http_port) || 10809;
+		var sHost = (status && status.socks_host) || '127.0.0.1';
+		var hHost = (status && status.http_host) || '127.0.0.1';
 
 		var socksStatus = (status && status.socks_listening) ? _('正常监听') : _('未监听');
 		var httpStatus = (status && status.http_listening) ? _('正常监听') : _('未监听');
@@ -108,7 +113,7 @@ return view.extend({
 							'style': 'margin-left: 15px;',
 							'click': function(ev) {
 								ev.target.disabled = true;
-								ui.showModal(_('健康检查'), [ E('p', {}, _('正在测试 SOCKS5h:7890 与 HTTP:10809 代理出口连通性...')) ]);
+								ui.showModal(_('健康检查'), [ E('p', {}, _('正在测试 SOCKS 与 HTTP 代理出口连通性...')) ]);
 								callTestHealth().then(function(res) {
 									ui.hideModal();
 									ev.target.disabled = false;
@@ -154,7 +159,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('客户端监听端口')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('span', {}, 'SOCKS5h: 7890 (' + socksStatus + ') | HTTP Proxy: 10809 (' + httpStatus + ') | DNS: 1.1.1.1 DoH (防泄露)')
+						E('span', {}, 'SOCKS5: ' + sHost + ':' + sPort + ' (' + socksStatus + ') | HTTP: ' + hHost + ':' + hPort + ' (' + httpStatus + ') | DNS: 1.1.1.1 DoH (防泄露)')
 					])
 				])
 			])
@@ -179,12 +184,17 @@ return view.extend({
 			])
 		]);
 
-		nodes.forEach(function(node) {
-			var isCur = Number(node.id) === Number(curId);
-			var isFixed = Number(node.id) === Number(fixedId);
+		if (nodes.length === 0) {
+			table.appendChild(E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td', 'colspan': '7', 'style': 'text-align:center; padding:25px; color:#888; font-size:13px;' }, _('暂无节点信息，请点击下方「+ 添加节点信息」按钮手动添加节点。'))
+			]));
+		} else {
+			nodes.forEach(function(node) {
+				var isCur = Number(node.id) === Number(curId);
+				var isFixed = Number(node.id) === Number(fixedId);
 
-			var latencyId = 'latency-cell-' + node.id;
-			var tr = E('tr', { 'class': 'tr' }, [
+				var latencyId = 'latency-cell-' + node.id;
+				var tr = E('tr', { 'class': 'tr' }, [
 				// Status dot
 				E('td', { 'class': 'td', 'style': 'text-align:center;' }, [
 					isCur
@@ -284,6 +294,7 @@ return view.extend({
 
 			table.appendChild(tr);
 		});
+		}
 
 		var toolbar = E('div', { 'class': 'cbi-section-actions', 'style': 'margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;' }, [
 			E('div', {}, [
@@ -522,26 +533,48 @@ return view.extend({
 	},
 
 	renderSettingsSection: function(nodesData, settingsData) {
-		var listenHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.listen_host) || '127.0.0.1' });
+		var socksHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:180px;', 'value': (settingsData && settingsData.socks_host) || (settingsData && settingsData.listen_host) || '127.0.0.1' });
+		var socksPort = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.socks_port) || 7890 });
+
+		var httpHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:180px;', 'value': (settingsData && settingsData.http_host) || (settingsData && settingsData.listen_host) || '127.0.0.1' });
+		var httpPort = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.http_port) || 10809 });
+
 		var proxyHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.proxy_host) || '127.0.0.1' });
 		var probeUrl = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.probe_url) || 'http://www.gstatic.com/generate_204' });
-		var healthUrl = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.health_url) || 'https://api.ipify.org' });
+		var healthUrl = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.health_url) || 'http://www.gstatic.com/generate_204' });
 
 		var fixedSelect = E('select', { 'class': 'cbi-input-select' });
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
-		var curFixed = nodesData ? nodesData.fixed_proxy_id : 1;
-		nodes.forEach(function(n) {
-			fixedSelect.appendChild(E('option', { 'value': n.id, 'selected': Number(n.id) === Number(curFixed) }, '#' + n.id + ' - ' + n.name + ' (' + n.type + ')'));
-		});
+		var curFixed = nodesData ? nodesData.fixed_proxy_id : null;
+		if (nodes.length === 0) {
+			fixedSelect.appendChild(E('option', { 'value': '' }, _('暂无可用节点')));
+		} else {
+			nodes.forEach(function(n) {
+				fixedSelect.appendChild(E('option', { 'value': n.id, 'selected': Number(n.id) === Number(curFixed) }, '#' + n.id + ' - ' + n.name + ' (' + n.type + ')'));
+			});
+		}
 
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('全局运行参数 (/etc/xc/settings.json)')),
 			E('div', { 'class': 'cbi-section-node' }, [
 				E('div', { 'class': 'cbi-value' }, [
-					E('label', { 'class': 'cbi-value-title' }, _('监听绑定地址 (listen_host)')),
+					E('label', { 'class': 'cbi-value-title' }, E('strong', {}, _('SOCKS 代理接口'))),
 					E('div', { 'class': 'cbi-value-field' }, [
-						listenHost,
-						E('div', { 'class': 'cbi-value-description' }, _('SOCKS5 与 HTTP 端口绑定的地址，默认为 127.0.0.1；若需局域网其他设备使用可配置为 0.0.0.0 或路由器 LAN IP'))
+						E('div', { 'style': 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;' }, [
+							E('div', {}, [ E('span', { 'style': 'font-size:12px; color:#666;' }, _('绑定地址: ')), socksHost ]),
+							E('div', {}, [ E('span', { 'style': 'font-size:12px; color:#666;' }, _('监听端口: ')), socksPort ])
+						]),
+						E('div', { 'class': 'cbi-value-description' }, _('支持 TCP/UDP，客户端配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。'))
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, E('strong', {}, _('HTTP 代理接口'))),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('div', { 'style': 'display:flex; gap:10px; align-items:center; flex-wrap:wrap;' }, [
+							E('div', {}, [ E('span', { 'style': 'font-size:12px; color:#666;' }, _('绑定地址: ')), httpHost ]),
+							E('div', {}, [ E('span', { 'style': 'font-size:12px; color:#666;' }, _('监听端口: ')), httpPort ])
+						]),
+						E('div', { 'class': 'cbi-value-description' }, _('供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。'))
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -571,7 +604,10 @@ return view.extend({
 							'click': function(ev) {
 								ev.target.disabled = true;
 								var newSettings = {
-									listen_host: listenHost.value.trim(),
+									socks_host: socksHost.value.trim(),
+									socks_port: Number(socksPort.value.trim()),
+									http_host: httpHost.value.trim(),
+									http_port: Number(httpPort.value.trim()),
 									proxy_host: proxyHost.value.trim(),
 									probe_url: probeUrl.value.trim(),
 									health_url: healthUrl.value.trim()
