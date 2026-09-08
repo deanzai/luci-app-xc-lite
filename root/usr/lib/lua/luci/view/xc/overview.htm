@@ -1,0 +1,585 @@
+<%+header%>
+
+<style>
+.xc-badge { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:bold; }
+.xc-badge-success { background-color:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3); }
+.xc-badge-warning { background-color:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); }
+.xc-badge-danger { background-color:rgba(239,68,68,0.15); color:#ef4444; border:1px solid rgba(239,68,68,0.3); }
+.xc-badge-info { background-color:rgba(59,130,246,0.15); color:#3b82f6; border:1px solid rgba(59,130,246,0.3); }
+
+.xc-modal-mask { position:fixed; z-index:9999; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; }
+.xc-modal { background:#fff; border-radius:8px; max-width:650px; width:95%; max-height:90vh; overflow-y:auto; box-shadow:0 10px 25px rgba(0,0,0,0.3); padding:20px; }
+@media (prefers-color-scheme: dark) {
+    .xc-modal { background:#222; color:#eee; }
+}
+.xc-hidden { display:none !important; }
+.xc-spin { display:inline-block; animation:xc-rotate 1s linear infinite; }
+@keyframes xc-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+</style>
+
+<div class="cbi-map">
+    <h2 name="content"><%=translate("xc 节点切换与分流管理器")%></h2>
+    <div class="cbi-map-descr">
+        <%=translate("轻量级 Xray 节点切换与双协议分流管理面板，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、手动平滑切换与失败回滚。")%>
+    </div>
+
+    <!-- 运行状态看板 -->
+    <fieldset class="cbi-section">
+        <legend><%=translate("运行状态与分流概览")%></legend>
+        <div class="cbi-section-node">
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("服务运行状态")%></label>
+                <div class="cbi-value-field">
+                    <span id="stat-running-badge" class="xc-badge xc-badge-warning"><%=translate("检测中...")%></span>
+                    <button class="cbi-button cbi-button-action" style="margin-left:12px;" onclick="doTestHealth()"><%=translate("测试双端口出口")%></button>
+                    <button class="cbi-button cbi-button-reset" style="margin-left:6px;" onclick="doRollback()"><%=translate("回滚上一节点")%></button>
+                </div>
+            </div>
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("当前活动出口节点")%></label>
+                <div class="cbi-value-field">
+                    <strong id="stat-current-node" style="color:#2563eb; font-size:14px;"><%=translate("获取中...")%></strong>
+                    <div class="cbi-value-description"><%=translate("承担普通海外流量 (geosite:geolocation-!cn) 与最终兜底 fallback 出口")%></div>
+                </div>
+            </div>
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("固定分流节点 (Fixed Proxy)")%></label>
+                <div class="cbi-value-field">
+                    <strong id="stat-fixed-node"><%=translate("获取中...")%></strong>
+                    <div class="cbi-value-description"><%=translate("固定承担 OpenAI, YouTube, Google, Twitter, Telegram 等 geosite 分流")%></div>
+                </div>
+            </div>
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("监听端口与 DNS 防泄露")%></label>
+                <div class="cbi-value-field" id="stat-ports-info">
+                    SOCKS5h: 7890 | HTTP Proxy: 10809 | DoH: 1.1.1.1 (dns-proxy)
+                </div>
+            </div>
+        </div>
+    </fieldset>
+
+    <!-- 节点管理清单 -->
+    <fieldset class="cbi-section">
+        <legend><%=translate("节点列表与管理")%></legend>
+        <div class="cbi-section-actions" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <button class="cbi-button cbi-button-save" onclick="openAddNodeModal()">+ <%=translate("添加节点信息")%></button>
+                <button id="btn-refresh-all" class="cbi-button cbi-button-action" style="margin-left:8px;" onclick="doRefreshAllSpeed()"><%=translate("手动刷新全部测速")%></button>
+            </div>
+            <div style="font-size:12px; color:#666;">
+                <span style="margin-right:8px;"><span style="color:#10b981; font-weight:bold;">&lt;250ms</span> <%=translate("极优")%></span>
+                <span style="margin-right:8px;"><span style="color:#f59e0b; font-weight:bold;">250~500ms</span> <%=translate("良好")%></span>
+                <span><span style="color:#ef4444; font-weight:bold;">&gt;500ms</span> <%=translate("较慢")%></span>
+            </div>
+        </div>
+
+        <div class="cbi-section-node">
+            <table class="table cbi-section-table" id="xc-nodes-table">
+                <tr class="tr table-titles">
+                    <th class="th" style="width:50px; text-align:center;"><%=translate("状态")%></th>
+                    <th class="th" style="width:60px; text-align:center;"><%=translate("编号")%></th>
+                    <th class="th"><%=translate("节点名称")%></th>
+                    <th class="th" style="width:160px;"><%=translate("协议类型")%></th>
+                    <th class="th"><%=translate("服务器与端口")%></th>
+                    <th class="th" style="width:130px; text-align:center;"><%=translate("完整代理延迟")%></th>
+                    <th class="th cbi-section-actions" style="width:230px; text-align:right;"><%=translate("操作")%></th>
+                </tr>
+                <tbody id="nodes-tbody">
+                    <tr><td colspan="7" style="text-align:center; padding:15px;"><%=translate("正在载入节点清单...")%></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </fieldset>
+
+    <!-- 全局参数配置 -->
+    <fieldset class="cbi-section">
+        <legend><%=translate("全局运行参数 (/etc/xc/settings.json)")%></legend>
+        <form id="form-settings" onsubmit="doSaveSettings(event)">
+            <div class="cbi-section-node">
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("监听绑定地址 (listen_host)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-listen-host" class="cbi-input-text" style="width:320px;">
+                        <div class="cbi-value-description"><%=translate("默认 127.0.0.1 仅限本机；局域网共享请填 0.0.0.0 或路由器 LAN IP")%></div>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("健康测试代理地址 (proxy_host)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-proxy-host" class="cbi-input-text" style="width:320px;">
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("延迟测速 URL (probe_url)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-probe-url" class="cbi-input-text" style="width:320px;">
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("出口连通性 URL (health_url)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-health-url" class="cbi-input-text" style="width:320px;">
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("固定分流节点 (fixed_proxy_id)")%></label>
+                    <div class="cbi-value-field">
+                        <select id="setting-fixed-id" class="cbi-input-select" style="width:320px;"></select>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"></label>
+                    <div class="cbi-value-field">
+                        <button type="submit" class="cbi-button cbi-button-save"><%=translate("保存并应用全局设置")%></button>
+                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存")%></span>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </fieldset>
+</div>
+
+<!-- 添加/编辑节点模态对话框 (Modal) -->
+<div id="node-modal-mask" class="xc-modal-mask xc-hidden">
+    <div class="xc-modal">
+        <h3 id="modal-title" style="margin-top:0;"><%=translate("添加节点信息")%></h3>
+        <hr style="border:0; border-top:1px solid #ddd; margin:10px 0 15px 0;">
+        <form id="node-form" onsubmit="doSaveNode(event)">
+            <input type="hidden" id="form-mode" value="add">
+            <table class="table" style="width:100%;">
+                <tr>
+                    <td style="width:130px; font-weight:bold;"><%=translate("节点编号 (ID)")%> *</td>
+                    <td><input type="number" id="form-id" required class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr>
+                    <td style="font-weight:bold;"><%=translate("节点备注名称")%> *</td>
+                    <td><input type="text" id="form-name" required placeholder="例如：hk-reality-01" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr>
+                    <td style="font-weight:bold;"><%=translate("协议类型")%> *</td>
+                    <td>
+                        <select id="form-type" class="cbi-input-select" style="width:100%;" onchange="toggleFormFields()">
+                            <option value="VLESS REALITY">VLESS REALITY</option>
+                            <option value="NaiveProxy SOCKS5">NaiveProxy SOCKS5</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <td style="font-weight:bold;"><%=translate("服务器地址")%> *</td>
+                    <td><input type="text" id="form-server" required placeholder="域名或 IP" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr>
+                    <td style="font-weight:bold;"><%=translate("端口")%> *</td>
+                    <td><input type="number" id="form-port" required value="443" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <!-- VLESS REALITY 专属字段 -->
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">UUID *</td>
+                    <td><input type="text" id="form-uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">SNI 伪装域名 *</td>
+                    <td><input type="text" id="form-sni" placeholder="gateway.icloud.com" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">Public Key (公钥) *</td>
+                    <td><input type="text" id="form-pubkey" placeholder="REALITY Public Key" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">Short ID (短 ID)</td>
+                    <td><input type="text" id="form-shortid" placeholder="可留空" class="cbi-input-text" style="width:100%;"></td>
+                </tr>
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">Fingerprint</td>
+                    <td>
+                        <select id="form-fingerprint" class="cbi-input-select" style="width:100%;">
+                            <option value="chrome" selected>chrome</option>
+                            <option value="firefox">firefox</option>
+                            <option value="safari">safari</option>
+                            <option value="edge">edge</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr class="form-reality-row">
+                    <td style="font-weight:bold;">Flow</td>
+                    <td>
+                        <select id="form-flow" class="cbi-input-select" style="width:100%;">
+                            <option value="xtls-rprx-vision" selected>xtls-rprx-vision</option>
+                            <option value="none">none</option>
+                        </select>
+                    </td>
+                </tr>
+                <!-- NaiveProxy 专属提示 -->
+                <tr class="form-naive-row xc-hidden">
+                    <td style="font-weight:bold;"><%=translate("SOCKS 说明")%></td>
+                    <td><span style="color:#f59e0b;"><%=translate("需已在路由器本地运行 NaiveProxy 客户端，默认地址 127.0.0.1，端口一般为 45321~45325。")%></span></td>
+                </tr>
+            </table>
+
+            <div style="text-align:right; margin-top:20px;">
+                <button type="button" class="cbi-button cbi-button-reset" onclick="closeModal()"><%=translate("取消")%></button>
+                <button type="submit" class="cbi-button cbi-button-save" style="margin-left:8px;"><%=translate("保存节点")%></button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script type="text/javascript">
+var appData = {
+    status: {},
+    nodesData: { version: 1, fixed_proxy_id: 1, nodes: [] },
+    settings: {}
+};
+
+var BASE_URL = "<%=url('admin/services/xc')%>";
+
+function fetchJson(subpath, options) {
+    var url = BASE_URL + "/" + subpath;
+    return fetch(url, options).then(function(r) { return r.json(); }).catch(function(err) {
+        console.error("fetch error:", err);
+        return null;
+    });
+}
+
+function loadAll() {
+    Promise.all([
+        fetchJson("status"),
+        fetchJson("get_nodes"),
+        fetchJson("get_settings")
+    ]).then(function(results) {
+        if (results[0]) appData.status = results[0];
+        if (results[1]) appData.nodesData = results[1];
+        if (results[2]) appData.settings = results[2];
+        renderAll();
+    });
+}
+
+function renderAll() {
+    renderStatus();
+    renderNodes();
+    renderSettings();
+}
+
+function renderStatus() {
+    var st = appData.status || {};
+    var badge = document.getElementById("stat-running-badge");
+    if (st.running) {
+        badge.className = "xc-badge xc-badge-success";
+        badge.innerText = "<%=translate('● Xray 运行中')%> (PID: " + (st.pid || "running") + ")";
+    } else {
+        badge.className = "xc-badge xc-badge-danger";
+        badge.innerText = "<%=translate('● 服务未运行')%>";
+    }
+
+    var nodes = appData.nodesData.nodes || [];
+    var curNode = nodes.find(function(n) { return Number(n.id) === Number(st.current_id); });
+    var fixedNode = nodes.find(function(n) { return Number(n.id) === Number(appData.nodesData.fixed_proxy_id); });
+
+    document.getElementById("stat-current-node").innerText = curNode 
+        ? ("#" + curNode.id + " " + curNode.name + " (" + curNode.type + ")") 
+        : "<%=translate('未选择')%>";
+
+    document.getElementById("stat-fixed-node").innerText = fixedNode 
+        ? ("#" + fixedNode.id + " " + fixedNode.name) 
+        : ("ID: " + (appData.nodesData.fixed_proxy_id || 1));
+
+    var socks = st.socks_listening ? "<span style='color:#10b981;'><%=translate('正常')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
+    var http = st.http_listening ? "<span style='color:#10b981;'><%=translate('正常')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
+    document.getElementById("stat-ports-info").innerHTML = "SOCKS5h: 7890 (" + socks + ") | HTTP: 10809 (" + http + ") | DoH: 1.1.1.1 (<%=translate('防泄露')%>)";
+}
+
+function renderNodes() {
+    var tbody = document.getElementById("nodes-tbody");
+    tbody.innerHTML = "";
+    var nodes = appData.nodesData.nodes || [];
+    var curId = appData.status.current_id;
+    var fixedId = appData.nodesData.fixed_proxy_id;
+
+    if (nodes.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:15px;"><%=translate("暂无节点，请点击上方按钮添加节点。")%></td></tr>';
+        return;
+    }
+
+    nodes.forEach(function(node) {
+        var isCur = Number(node.id) === Number(curId);
+        var isFixed = Number(node.id) === Number(fixedId);
+
+        var tr = document.createElement("tr");
+        tr.className = "tr";
+
+        var curMarker = isCur 
+            ? '<span style="color:#2563eb; font-weight:bold; font-size:16px;">●</span>' 
+            : '<span style="color:#ccc;">○</span>';
+
+        var fixedBadge = isFixed 
+            ? ' <span style="font-size:10px; background:#e0e7ff; color:#3730a3; padding:1px 5px; border-radius:3px;"><%=translate("固定分流")%></span>' 
+            : '';
+
+        var switchBtn = isCur 
+            ? '<button class="cbi-button" disabled><%=translate("使用中")%></button>' 
+            : '<button class="cbi-button cbi-button-apply" onclick="doSwitchNode(' + node.id + ')"><%=translate("切换")%></button>';
+
+        var delBtn = '<button class="cbi-button cbi-button-remove" style="margin-left:4px;" ' 
+            + ((isCur || isFixed) ? 'disabled title="<%=translate("活动节点或固定节点不可删除")%>"' : '') 
+            + ' onclick="doDeleteNode(' + node.id + ')"><%=translate("删除")%></button>';
+
+        tr.innerHTML = '<td class="td" style="text-align:center;">' + curMarker + '</td>'
+            + '<td class="td" style="text-align:center; font-family:monospace; font-weight:bold;">' + node.id + '</td>'
+            + '<td class="td"><strong>' + node.name + '</strong>' + fixedBadge + '</td>'
+            + '<td class="td"><span style="font-family:monospace; font-size:11px;">' + node.type + '</span></td>'
+            + '<td class="td" style="font-family:monospace;">' + node.server + ':' + node.port + '</td>'
+            + '<td class="td" id="latency-cell-' + node.id + '" style="text-align:center;"><span style="color:#888; font-size:11px;"><%=translate("未测速")%></span></td>'
+            + '<td class="td cbi-section-actions" style="text-align:right;">'
+            + switchBtn
+            + '<button class="cbi-button cbi-button-action" style="margin-left:4px;" onclick="doProbeNode(' + node.id + ')"><%=translate("测速")%></button>'
+            + '<button class="cbi-button cbi-button-edit" style="margin-left:4px;" onclick="openEditNodeModal(' + node.id + ')"><%=translate("编辑")%></button>'
+            + delBtn
+            + '</td>';
+
+        tbody.appendChild(tr);
+    });
+}
+
+function renderSettings() {
+    var s = appData.settings || {};
+    document.getElementById("setting-listen-host").value = s.listen_host || "127.0.0.1";
+    document.getElementById("setting-proxy-host").value = s.proxy_host || "127.0.0.1";
+    document.getElementById("setting-probe-url").value = s.probe_url || "http://www.gstatic.com/generate_204";
+    document.getElementById("setting-health-url").value = s.health_url || "http://www.gstatic.com/generate_204";
+
+    var sel = document.getElementById("setting-fixed-id");
+    sel.innerHTML = "";
+    var nodes = appData.nodesData.nodes || [];
+    nodes.forEach(function(n) {
+        var opt = document.createElement("option");
+        opt.value = n.id;
+        opt.text = "#" + n.id + " " + n.name + " (" + n.type + ")";
+        if (Number(n.id) === Number(appData.nodesData.fixed_proxy_id)) opt.selected = true;
+        sel.appendChild(opt);
+    });
+}
+
+// 需求 1: 手动切换指定节点
+function doSwitchNode(id) {
+    if (!confirm("<%=translate('确定要切换至该节点吗？系统将自动校验 Xray 配置、平滑重载并执行连通性检查。')%>")) return;
+    var cell = document.getElementById("latency-cell-" + id);
+    if (cell) cell.innerHTML = '<span class="xc-spin" style="color:#2563eb;">⟳</span> <%=translate("切换中...")%>';
+
+    fetch(BASE_URL + "/switch_node?id=" + id).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            alert("<%=translate('节点切换成功！双端口出口代理访问正常。')%>");
+            loadAll();
+        } else {
+            alert("<%=translate('切换失败，已安全回滚：')%>\n" + (res.message || ""));
+            loadAll();
+        }
+    }).catch(function(e) {
+        alert("<%=translate('请求错误：')%> " + e);
+        loadAll();
+    });
+}
+
+// 需求 3: 手动刷新测速
+function doProbeNode(id) {
+    var cell = document.getElementById("latency-cell-" + id);
+    if (cell) cell.innerHTML = '<span class="xc-spin" style="color:#2563eb;">⟳</span> <%=translate("测速中...")%>';
+    fetch(BASE_URL + "/probe_node?id=" + id).then(function(r) { return r.json(); }).then(function(res) {
+        if (!cell) return;
+        if (res && res.latency > 0) {
+            var color = res.latency < 250 ? "#10b981" : (res.latency < 500 ? "#f59e0b" : "#ef4444");
+            cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
+        } else {
+            cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("超时/失败")%></span>';
+        }
+    });
+}
+
+function doRefreshAllSpeed() {
+    var btn = document.getElementById("btn-refresh-all");
+    btn.disabled = true;
+    btn.innerText = "<%=translate('正在批量测速...')%>";
+
+    var nodes = appData.nodesData.nodes || [];
+    var promises = nodes.map(function(n) {
+        return fetch(BASE_URL + "/probe_node?id=" + n.id).then(function(r) { return r.json(); }).then(function(res) {
+            var cell = document.getElementById("latency-cell-" + n.id);
+            if (!cell) return;
+            if (res && res.latency > 0) {
+                var color = res.latency < 250 ? "#10b981" : (res.latency < 500 ? "#f59e0b" : "#ef4444");
+                cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
+            } else {
+                cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("超时/失败")%></span>';
+            }
+        });
+    });
+
+    Promise.all(promises).then(function() {
+        btn.disabled = false;
+        btn.innerText = "<%=translate('手动刷新全部测速')%>";
+    });
+}
+
+function doTestHealth() {
+    alert("<%=translate('开始测试 SOCKS5h:7890 与 HTTP:10809 出口连通性，请稍候...')%>");
+    fetch(BASE_URL + "/test_health").then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            alert("<%=translate('出口健康检查通过！双端口访问正常。')%>\n" + res.message);
+        } else {
+            alert("<%=translate('出口检查未通过：')%>\n" + (res.message || ""));
+        }
+    });
+}
+
+function doRollback() {
+    if (!confirm("<%=translate('确认回滚到上一份备份配置吗？')%>")) return;
+    fetch(BASE_URL + "/rollback").then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            alert("<%=translate('回滚成功！')%>");
+            loadAll();
+        } else {
+            alert("<%=translate('回滚失败：')%>\n" + (res.message || ""));
+        }
+    });
+}
+
+// 需求 2: 添加与编辑节点
+function openAddNodeModal() {
+    document.getElementById("modal-title").innerText = "<%=translate('添加节点信息')%>";
+    document.getElementById("form-mode").value = "add";
+    var maxId = 0;
+    (appData.nodesData.nodes || []).forEach(function(n) { if (Number(n.id) > maxId) maxId = Number(n.id); });
+    document.getElementById("form-id").value = maxId + 1;
+    document.getElementById("form-id").disabled = false;
+    document.getElementById("form-name").value = "";
+    document.getElementById("form-type").value = "VLESS REALITY";
+    document.getElementById("form-server").value = "";
+    document.getElementById("form-port").value = "443";
+    document.getElementById("form-uuid").value = "";
+    document.getElementById("form-sni").value = "gateway.icloud.com";
+    document.getElementById("form-pubkey").value = "";
+    document.getElementById("form-shortid").value = "";
+    document.getElementById("form-fingerprint").value = "chrome";
+    document.getElementById("form-flow").value = "xtls-rprx-vision";
+
+    toggleFormFields();
+    document.getElementById("node-modal-mask").classList.remove("xc-hidden");
+}
+
+function openEditNodeModal(id) {
+    var node = (appData.nodesData.nodes || []).find(function(n) { return Number(n.id) === Number(id); });
+    if (!node) return;
+
+    document.getElementById("modal-title").innerText = "<%=translate('编辑节点 #')%>" + id;
+    document.getElementById("form-mode").value = "edit";
+    document.getElementById("form-id").value = node.id;
+    document.getElementById("form-id").disabled = true;
+    document.getElementById("form-name").value = node.name || "";
+    document.getElementById("form-type").value = node.type || "VLESS REALITY";
+    document.getElementById("form-server").value = node.server || "";
+    document.getElementById("form-port").value = node.port || 443;
+    document.getElementById("form-uuid").value = node.uuid || "";
+    document.getElementById("form-sni").value = node.sni || "";
+    document.getElementById("form-pubkey").value = node.public_key || "";
+    document.getElementById("form-shortid").value = node.short_id || "";
+    document.getElementById("form-fingerprint").value = node.fingerprint || "chrome";
+    document.getElementById("form-flow").value = node.flow || "xtls-rprx-vision";
+
+    toggleFormFields();
+    document.getElementById("node-modal-mask").classList.remove("xc-hidden");
+}
+
+function closeModal() {
+    document.getElementById("node-modal-mask").classList.add("xc-hidden");
+}
+
+function toggleFormFields() {
+    var type = document.getElementById("form-type").value;
+    var isReality = type === "VLESS REALITY";
+    var realityRows = document.querySelectorAll(".form-reality-row");
+    var naiveRows = document.querySelectorAll(".form-naive-row");
+
+    realityRows.forEach(function(r) { if (isReality) r.classList.remove("xc-hidden"); else r.classList.add("xc-hidden"); });
+    naiveRows.forEach(function(r) { if (isReality) r.classList.add("xc-hidden"); else r.classList.remove("xc-hidden"); });
+
+    var portInput = document.getElementById("form-port");
+    if (isReality && portInput.value == "45321") portInput.value = "443";
+    if (!isReality && portInput.value == "443") portInput.value = "45321";
+}
+
+function doSaveNode(ev) {
+    ev.preventDefault();
+    var node = {
+        id: Number(document.getElementById("form-id").value),
+        name: document.getElementById("form-name").value.trim(),
+        type: document.getElementById("form-type").value,
+        server: document.getElementById("form-server").value.trim(),
+        port: Number(document.getElementById("form-port").value)
+    };
+
+    if (node.type === "VLESS REALITY") {
+        node.uuid = document.getElementById("form-uuid").value.trim();
+        node.sni = document.getElementById("form-sni").value.trim();
+        node.public_key = document.getElementById("form-pubkey").value.trim();
+        node.short_id = document.getElementById("form-shortid").value.trim();
+        node.fingerprint = document.getElementById("form-fingerprint").value;
+        node.flow = document.getElementById("form-flow").value;
+    }
+
+    var body = "node=" + encodeURIComponent(JSON.stringify(node));
+    fetch(BASE_URL + "/save_node", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body
+    }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            closeModal();
+            loadAll();
+        } else {
+            alert("<%=translate('保存失败：')%> " + (res.message || ""));
+        }
+    });
+}
+
+function doDeleteNode(id) {
+    if (!confirm("<%=translate('确定删除该节点吗？')%>")) return;
+    fetch(BASE_URL + "/delete_node?id=" + id).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            loadAll();
+        } else {
+            alert("<%=translate('删除失败：')%> " + (res.message || ""));
+        }
+    });
+}
+
+function doSaveSettings(ev) {
+    ev.preventDefault();
+    var payload = {
+        settings: {
+            listen_host: document.getElementById("setting-listen-host").value.trim(),
+            proxy_host: document.getElementById("setting-proxy-host").value.trim(),
+            probe_url: document.getElementById("setting-probe-url").value.trim(),
+            health_url: document.getElementById("setting-health-url").value.trim()
+        },
+        fixed_proxy_id: Number(document.getElementById("setting-fixed-id").value)
+    };
+
+    fetch(BASE_URL + "/save_settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            var tip = document.getElementById("settings-tip");
+            tip.classList.remove("xc-hidden");
+            setTimeout(function() { tip.classList.add("xc-hidden"); }, 3000);
+            loadAll();
+        } else {
+            alert("<%=translate('设置保存失败')%>");
+        }
+    });
+}
+
+window.addEventListener("DOMContentLoaded", loadAll);
+</script>
+
+<%+footer%>
