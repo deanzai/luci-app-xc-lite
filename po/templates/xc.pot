@@ -1,0 +1,35 @@
+msgid ""
+msgstr "Content-Type: text/plain; charset=UTF-8"
+
+msgid "xc 节点分流"
+msgstr ""
+
+msgid "xc 节点切换与分流管理器"
+msgstr ""
+
+msgid "服务运行状态"
+msgstr ""
+
+msgid "当前活动节点 (proxy-selected)"
+msgstr ""
+
+msgid "固定分流节点 (Fixed Proxy)"
+msgstr ""
+
+msgid "测试双端口连通性"
+msgstr ""
+
+msgid "回滚上一节点"
+msgstr ""
+
+msgid "添加节点信息"
+msgstr ""
+
+msgid "手动刷新全部测速"
+msgstr ""
+
+msgid "节点清单与管理 (/etc/xc/nodes.json)"
+msgstr ""
+
+msgid "全局运行参数 (/etc/xc/settings.json)"
+msgstr ""

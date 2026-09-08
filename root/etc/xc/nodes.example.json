@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "fixed_proxy_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "name": "proxy-example",
+      "type": "VLESS REALITY",
+      "server": "example.invalid",
+      "port": 443,
+      "uuid": "REPLACE_ME",
+      "sni": "example.invalid",
+      "public_key": "REPLACE_ME",
+      "short_id": "REPLACE_ME",
+      "fingerprint": "chrome",
+      "flow": "xtls-rprx-vision"
+    },
+    {
+      "id": 2,
+      "name": "naive-example",
+      "type": "NaiveProxy SOCKS5",
+      "server": "127.0.0.1",
+      "port": 45321
+    }
+  ]
+}

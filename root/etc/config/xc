@@ -1,0 +1,2 @@
+config xc 'main'
+	option enabled '1'

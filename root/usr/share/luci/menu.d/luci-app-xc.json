@@ -1,0 +1,12 @@
+{
+	"admin/services/xc": {
+		"title": "xc 节点分流",
+		"action": {
+			"type": "view",
+			"path": "xc/overview"
+		},
+		"depends": {
+			"acl": [ "luci-app-xc" ]
+		}
+	}
+}

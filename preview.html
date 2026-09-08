@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>xc 节点分流 - LuCI Web 插件原型</title>
+  <!-- Tailwind CSS provided via official allowlisted gstatic -->
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    :root {
+      --luci-bg: #f3f4f6;
+      --luci-card: #ffffff;
+      --luci-border: #e5e7eb;
+      --luci-primary: #2563eb;
+      --luci-text: #1f2937;
+      --luci-muted: #6b7280;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --luci-bg: #111827;
+        --luci-card: #1f2937;
+        --luci-border: #374151;
+        --luci-primary: #3b82f6;
+        --luci-text: #f9fafb;
+        --luci-muted: #9ca3af;
+      }
+    }
+    .badge-success { background-color: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-warning { background-color: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+    .badge-danger { background-color: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge-info { background-color: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+  </style>
+</head>
+<body class="bg-[var(--background,#f4f5f7)] text-[var(--foreground,#1e293b)] antialiased min-h-screen p-3 md:p-6 font-sans">
+
+  <!-- LuCI Standard Top Navigation / Header Mockup -->
+  <header class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl px-5 py-3.5 mb-6 shadow-sm flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center space-x-3">
+      <div class="w-9 h-9 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-blue-500/20">
+        XC
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs font-semibold uppercase tracking-wider text-blue-600 bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded">LuCI 插件预览</span>
+          <span class="text-xs text-[var(--muted-foreground,#64748b)]">OpenWrt / ImmortalWrt</span>
+        </div>
+        <h1 class="text-base font-bold text-[var(--foreground,#0f172a)] tracking-tight">服务 &gt; xc 节点切换与分流管理器</h1>
+      </div>
+    </div>
+    
+    <div class="flex items-center space-x-2">
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium badge-success">
+        <span class="w-2 h-2 mr-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+        Xray Core 运行中
+      </span>
+      <span class="text-xs text-[var(--muted-foreground,#64748b)] hidden sm:inline-block border-l border-[var(--border,#e2e8f0)] pl-3">
+        版本: 1.0.0-lite
+      </span>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto space-y-6">
+
+    <!-- Overview Status Card (CBI Section) -->
+    <section class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-5 shadow-sm">
+      <div class="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-[var(--border,#e2e8f0)] gap-3">
+        <div>
+          <h2 class="text-lg font-bold text-[var(--foreground,#0f172a)] flex items-center gap-2">
+            <span>运行状态与分流概览</span>
+            <span id="quick-status-pill" class="text-xs font-normal px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">健康检查通过</span>
+          </h2>
+          <p class="text-xs text-[var(--muted-foreground,#64748b)] mt-1">
+            当前节点承担普通海外流量与兜底分流；固定代理节点承担 YouTube, Google, OpenAI 等 geosite 分流。
+          </p>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button onclick="testCurrentHealth()" id="btn-health-check" class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg border border-[var(--border,#cbd5e1)] hover:bg-slate-50 dark:hover:bg-slate-800 transition text-[var(--foreground,#334155)] shadow-xs">
+            <svg id="health-spin" class="w-3.5 h-3.5 mr-1.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+            </svg>
+            测试双端口出口
+          </button>
+          <button onclick="rollbackNode()" class="inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 transition">
+            <svg class="w-3.5 h-3.5 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path>
+            </svg>
+            回滚上一节点
+          </button>
+        </div>
+      </div>
+
+      <!-- Status Metrics Grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-4">
+        <!-- Metric 1: Current Selected Node -->
+        <div class="p-3.5 rounded-lg bg-[var(--background,#f8fafc)] border border-[var(--border,#e2e8f0)]">
+          <div class="text-xs text-[var(--muted-foreground,#64748b)] font-medium">当前出口节点 (xc current)</div>
+          <div class="flex items-center justify-between mt-2">
+            <span id="stat-current-node" class="text-sm font-bold text-blue-600 dark:text-blue-400 truncate max-w-[170px]" title="1 - proxy-tokyo-01">
+              #1 proxy-tokyo-01
+            </span>
+            <span id="stat-current-type" class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
+              VLESS REALITY
+            </span>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground,#64748b)] mt-1 flex items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>
+            承担 proxy-selected 流量
+          </div>
+        </div>
+
+        <!-- Metric 2: Fixed Geosite Proxy -->
+        <div class="p-3.5 rounded-lg bg-[var(--background,#f8fafc)] border border-[var(--border,#e2e8f0)]">
+          <div class="text-xs text-[var(--muted-foreground,#64748b)] font-medium">固定分流节点 (Fixed Proxy)</div>
+          <div class="flex items-center justify-between mt-2">
+            <span id="stat-fixed-node" class="text-sm font-bold text-[var(--foreground,#1e293b)] truncate max-w-[170px]">
+              #1 proxy-tokyo-01
+            </span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded font-mono bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+              ID: 1
+            </span>
+          </div>
+          <div class="text-[11px] text-[var(--muted-foreground,#64748b)] mt-1">
+            Google / OpenAI / YouTube
+          </div>
+        </div>
+
+        <!-- Metric 3: Ports -->
+        <div class="p-3.5 rounded-lg bg-[var(--background,#f8fafc)] border border-[var(--border,#e2e8f0)]">
+          <div class="text-xs text-[var(--muted-foreground,#64748b)] font-medium">监听端口 (Inbound Ports)</div>
+          <div class="mt-2 space-y-1 font-mono text-xs">
+            <div class="flex justify-between items-center">
+              <span class="text-[var(--foreground,#334155)] font-semibold">SOCKS5: <span class="text-blue-600">7890</span></span>
+              <span class="text-[10px] text-emerald-600 font-sans">● 监听正常</span>
+            </div>
+            <div class="flex justify-between items-center">
+              <span class="text-[var(--foreground,#334155)] font-semibold">HTTP: <span class="text-blue-600">10809</span></span>
+              <span class="text-[10px] text-emerald-600 font-sans">● 监听正常</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Metric 4: DNS Security -->
+        <div class="p-3.5 rounded-lg bg-[var(--background,#f8fafc)] border border-[var(--border,#e2e8f0)]">
+          <div class="text-xs text-[var(--muted-foreground,#64748b)] font-medium">DNS 防泄露策略</div>
+          <div class="mt-2 text-xs font-semibold text-[var(--foreground,#1e293b)]">
+            DoH 1.1.1.1 (dns-proxy)
+          </div>
+          <div class="text-[11px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center">
+            <svg class="w-3.5 h-3.5 mr-1" fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+            </svg>
+            禁用本地 DNS Fallback
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main Tabs: Node Management & Global Settings -->
+    <div class="flex border-b border-[var(--border,#e2e8f0)] space-x-6 text-sm font-medium">
+      <button onclick="switchTab('nodes')" id="tab-btn-nodes" class="pb-3 border-b-2 border-blue-600 text-blue-600 font-bold flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+        </svg>
+        节点列表与切换
+        <span id="node-count-badge" class="px-2 py-0.2 rounded-full text-xs bg-blue-100 dark:bg-blue-950 text-blue-600">4</span>
+      </button>
+      <button onclick="switchTab('settings')" id="tab-btn-settings" class="pb-3 border-b-2 border-transparent text-[var(--muted-foreground,#64748b)] hover:text-[var(--foreground,#0f172a)] flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+        </svg>
+        全局参数配置
+      </button>
+    </div>
+
+    <!-- TAB 1: NODES MANAGEMENT -->
+    <div id="tab-content-nodes" class="space-y-4">
+      <!-- Action Toolbar -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-4 shadow-sm">
+        <div class="flex items-center space-x-2">
+          <!-- Requirement 2: Add Node Button -->
+          <button onclick="openAddNodeModal()" class="inline-flex items-center px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition shadow-sm">
+            <svg class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            添加新节点
+          </button>
+
+          <!-- Requirement 3: Manual Refresh Speed Test -->
+          <button onclick="refreshAllSpeedTest()" id="btn-refresh-all" class="inline-flex items-center px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white transition shadow-sm">
+            <svg id="speed-icon-spin" class="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+            </svg>
+            手动刷新全部测速
+          </button>
+        </div>
+
+        <div class="flex items-center space-x-3 text-xs text-[var(--muted-foreground,#64748b)]">
+          <span class="inline-flex items-center">
+            <span class="w-2.5 h-2.5 rounded-full bg-blue-600 mr-1.5"></span>
+            当前生效节点
+          </span>
+          <span class="inline-flex items-center">
+            <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 mr-1.5"></span>
+            &lt; 300ms 极优
+          </span>
+          <span class="inline-flex items-center">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-500 mr-1.5"></span>
+            300~600ms 良好
+          </span>
+        </div>
+      </div>
+
+      <!-- Nodes Table (LuCI Table Style) -->
+      <div class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl shadow-sm overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 dark:bg-slate-800/60 text-[var(--muted-foreground,#64748b)] font-semibold border-b border-[var(--border,#e2e8f0)]">
+              <tr>
+                <th class="py-3 px-4 w-12 text-center">状态</th>
+                <th class="py-3 px-3 w-16 text-center">编号</th>
+                <th class="py-3 px-4 min-w-[140px]">节点名称</th>
+                <th class="py-3 px-3 w-36">协议类型</th>
+                <th class="py-3 px-4 min-w-[180px]">服务器地址与端口</th>
+                <th class="py-3 px-4 w-36 text-center">完整代理延迟</th>
+                <th class="py-3 px-4 w-52 text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody id="nodes-table-body" class="divide-y divide-[var(--border,#e2e8f0)] text-[var(--foreground,#1e293b)]">
+              <!-- Dynamically populated rows will appear here -->
+            </tbody>
+          </table>
+        </div>
+        
+        <div class="p-3.5 bg-slate-50 dark:bg-slate-800/30 border-t border-[var(--border,#e2e8f0)] flex flex-wrap items-center justify-between text-xs text-[var(--muted-foreground,#64748b)]">
+          <div>提示：点击「切换」后将执行 Xray 校验与双端口出口健康测试，遇异常将自动回滚。</div>
+          <div class="font-mono text-[11px]">配置文件: /etc/xc/nodes.json</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: GLOBAL SETTINGS -->
+    <div id="tab-content-settings" class="space-y-4 hidden">
+      <div class="bg-[var(--card,#ffffff)] border border-[var(--border,#e2e8f0)] rounded-xl p-6 shadow-sm">
+        <h3 class="text-base font-bold text-[var(--foreground,#0f172a)] mb-4 pb-2 border-b border-[var(--border,#e2e8f0)]">
+          基本运行参数 (/etc/xc/settings.json)
+        </h3>
+
+        <form id="form-settings" onsubmit="saveSettings(event)" class="space-y-4 max-w-2xl">
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">监听绑定地址 (listen_host)</label>
+            <input type="text" id="setting-listen-host" value="127.0.0.1" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:outline-hidden focus:ring-2 focus:ring-blue-500">
+            <p class="text-[11px] text-[var(--muted-foreground,#64748b)] mt-1">SOCKS5 / HTTP 代理端口绑定的网络接口，默认 127.0.0.1 仅限本机；若需局域网共享可填 0.0.0.0 或路由器 LAN IP。</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">健康测试代理主机 (proxy_host)</label>
+            <input type="text" id="setting-proxy-host" value="127.0.0.1" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:outline-hidden focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">延迟测速目标 URL (probe_url)</label>
+            <input type="text" id="setting-probe-url" value="http://www.gstatic.com/generate_204" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:outline-hidden focus:ring-2 focus:ring-blue-500">
+            <p class="text-[11px] text-[var(--muted-foreground,#64748b)] mt-1">测量完整代理链（SOCKS5h 代理向该目标请求 204）的耗时。</p>
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">健康检查与出口 IP 测试目标 (health_url)</label>
+            <input type="text" id="setting-health-url" value="https://api.ipify.org" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:outline-hidden focus:ring-2 focus:ring-blue-500">
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">固定分流节点编号 (fixed_proxy_id)</label>
+            <select id="setting-fixed-id" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:outline-hidden focus:ring-2 focus:ring-blue-500">
+              <!-- Populated from nodes -->
+            </select>
+            <p class="text-[11px] text-[var(--muted-foreground,#64748b)] mt-1">固定承载 OpenAI, YouTube, Twitter, Telegram, Netflix 等 geosite 流量的节点。</p>
+          </div>
+
+          <div class="pt-4 flex items-center space-x-3">
+            <button type="submit" class="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
+              保存并应用全局设置
+            </button>
+            <span id="settings-save-tip" class="text-xs text-emerald-600 hidden">✓ 设置已保存生效</span>
+          </div>
+        </form>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ADD / EDIT NODE MODAL (Requirement 2) -->
+  <div id="node-modal" class="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 hidden">
+    <div class="bg-[var(--card,#ffffff)] text-[var(--foreground,#1e293b)] border border-[var(--border,#e2e8f0)] rounded-2xl max-w-xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      
+      <!-- Modal Header -->
+      <div class="p-4 sm:p-5 border-b border-[var(--border,#e2e8f0)] flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <div class="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-600">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+          </div>
+          <h3 id="modal-title" class="text-base font-bold text-[var(--foreground,#0f172a)]">添加节点信息</h3>
+        </div>
+        <button onclick="closeNodeModal()" class="text-[var(--muted-foreground,#64748b)] hover:text-[var(--foreground,#0f172a)] p-1 rounded-lg">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Modal Body (Form) -->
+      <form id="node-form" onsubmit="handleSaveNode(event)" class="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1">
+        <input type="hidden" id="form-node-mode" value="add">
+        
+        <!-- Node ID & Name -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+              节点 ID <span class="text-red-500">*</span>
+            </label>
+            <input type="number" id="form-node-id" required min="1" max="999" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+            <p class="text-[10px] text-[var(--muted-foreground,#64748b)] mt-0.5">固定数字编号</p>
+          </div>
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+              节点备注名称 <span class="text-red-500">*</span>
+            </label>
+            <input type="text" id="form-node-name" required placeholder="例如：hk-reality-01" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500">
+          </div>
+        </div>
+
+        <!-- Node Type Selector -->
+        <div>
+          <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1.5">
+            协议类型 <span class="text-red-500">*</span>
+          </label>
+          <div class="grid grid-cols-2 gap-3">
+            <label class="flex items-center p-2.5 rounded-lg border border-[var(--border,#cbd5e1)] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 has-checked:border-blue-600 has-checked:bg-blue-50/50 dark:has-checked:bg-blue-950/30">
+              <input type="radio" name="node-type" value="VLESS REALITY" checked onchange="toggleTypeFields()" class="text-blue-600 focus:ring-blue-500">
+              <div class="ml-2">
+                <div class="text-xs font-bold text-[var(--foreground,#1e293b)]">VLESS REALITY</div>
+                <div class="text-[10px] text-[var(--muted-foreground,#64748b)]">Xray Vision 原生抗封锁协议</div>
+              </div>
+            </label>
+            <label class="flex items-center p-2.5 rounded-lg border border-[var(--border,#cbd5e1)] cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 has-checked:border-blue-600 has-checked:bg-blue-50/50 dark:has-checked:bg-blue-950/30">
+              <input type="radio" name="node-type" value="NaiveProxy SOCKS5" onchange="toggleTypeFields()" class="text-blue-600 focus:ring-blue-500">
+              <div class="ml-2">
+                <div class="text-xs font-bold text-[var(--foreground,#1e293b)]">NaiveProxy SOCKS5</div>
+                <div class="text-[10px] text-[var(--muted-foreground,#64748b)]">对接本机 Naive SOCKS 出站</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Common: Server & Port -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div class="sm:col-span-2">
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+              服务器地址 / IP <span class="text-red-500">*</span>
+            </label>
+            <input type="text" id="form-node-server" required placeholder="hk1.example.com 或 127.0.0.1" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+              端口 <span class="text-red-500">*</span>
+            </label>
+            <input type="number" id="form-node-port" required value="443" min="1" max="65535" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+          </div>
+        </div>
+
+        <!-- VLESS REALITY Specific Fields -->
+        <div id="reality-fields" class="space-y-3.5 pt-2 border-t border-[var(--border,#e2e8f0)]">
+          <div class="text-xs font-bold text-blue-600 flex items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-blue-600 mr-1.5"></span>
+            VLESS + REALITY 进阶参数
+          </div>
+
+          <div>
+            <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+              UUID <span class="text-red-500">*</span>
+            </label>
+            <input type="text" id="form-node-uuid" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+                SNI (Server Name) <span class="text-red-500">*</span>
+              </label>
+              <input type="text" id="form-node-sni" placeholder="gateway.icloud.com" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">
+                Public Key (公钥) <span class="text-red-500">*</span>
+              </label>
+              <input type="text" id="form-node-pubkey" placeholder="REALITY Public Key" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">Short ID (短 ID)</label>
+              <input type="text" id="form-node-shortid" placeholder="可留空或 8/16 字符" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">Fingerprint (指纹)</label>
+              <select id="form-node-fingerprint" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500">
+                <option value="chrome" selected>chrome</option>
+                <option value="firefox">firefox</option>
+                <option value="safari">safari</option>
+                <option value="edge">edge</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-[var(--foreground,#334155)] mb-1">Flow (流控)</label>
+              <select id="form-node-flow" class="w-full text-xs px-3 py-2 rounded-lg border border-[var(--border,#cbd5e1)] bg-[var(--background,#ffffff)] focus:ring-2 focus:ring-blue-500 font-mono">
+                <option value="xtls-rprx-vision" selected>xtls-rprx-vision</option>
+                <option value="none">无 (none)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- NaiveProxy Specific Help -->
+        <div id="naive-fields" class="space-y-3 pt-2 border-t border-[var(--border,#e2e8f0)] hidden">
+          <div class="text-xs font-bold text-amber-600 flex items-center">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-600 mr-1.5"></span>
+            NaiveProxy 本地 SOCKS 监听说明
+          </div>
+          <div class="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-[11px] text-amber-800 dark:text-amber-300">
+            NaiveProxy 通常在 OpenWrt 本机作为客户端运行，监听 45321~45325 端口。此处的服务器地址通常填写 <code>127.0.0.1</code>，端口填写对应的本地监听端口。
+          </div>
+        </div>
+
+        <!-- Modal Footer Actions -->
+        <div class="pt-4 border-t border-[var(--border,#e2e8f0)] flex items-center justify-end space-x-2">
+          <button type="button" onclick="closeNodeModal()" class="px-4 py-2 text-xs font-medium rounded-lg border border-[var(--border,#cbd5e1)] hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+            取消
+          </button>
+          <button type="submit" class="px-5 py-2 text-xs font-bold rounded-lg bg-blue-600 hover:bg-blue-700 text-white shadow-sm transition">
+            保存节点
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast" class="fixed bottom-5 right-5 z-50 transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none flex items-center p-3 rounded-xl shadow-lg border text-xs font-medium"></div>
+
+  <!-- INLINE LOGIC / CONTROLLER SCRIPT -->
+  <script>
+    // Initial State mimicking /etc/xc/nodes.json & /etc/xc/current
+    let appState = {
+      currentId: 1,
+      previousId: 2,
+      fixedProxyId: 1,
+      nodes: [
+        {
+          id: 1,
+          name: "proxy-tokyo-01",
+          type: "VLESS REALITY",
+          server: "jp.reality.example.com",
+          port: 443,
+          uuid: "e3b0c442-98fc-1c14-9afc-000000000001",
+          sni: "gateway.icloud.com",
+          public_key: "3b0c44298fc1c149afc000000000000123456789abc",
+          short_id: "6a8b9c0d",
+          fingerprint: "chrome",
+          flow: "xtls-rprx-vision",
+          latency: 182
+        },
+        {
+          id: 2,
+          name: "naive-hk-local",
+          type: "NaiveProxy SOCKS5",
+          server: "127.0.0.1",
+          port: 45321,
+          latency: 215
+        },
+        {
+          id: 3,
+          name: "us-los-angeles-reality",
+          type: "VLESS REALITY",
+          server: "us.reality.example.com",
+          port: 443,
+          uuid: "d41d8cd9-8f00-b204-e980-000000000002",
+          sni: "www.microsoft.com",
+          public_key: "41d8cd98f00b204e980000000000002abcdef123456",
+          short_id: "",
+          fingerprint: "chrome",
+          flow: "xtls-rprx-vision",
+          latency: 480
+        },
+        {
+          id: 4,
+          name: "sg-singapore-reality",
+          type: "VLESS REALITY",
+          server: "sg.reality.example.com",
+          port: 443,
+          uuid: "90015098-3cd2-4fb0-d696-000000000003",
+          sni: "dl.google.com",
+          public_key: "00150983cd24fb0d696000000000003987654321xyz",
+          short_id: "f1e2d3c4",
+          fingerprint: "chrome",
+          flow: "xtls-rprx-vision",
+          latency: 142
+        }
+      ]
+    };
+
+    function showToast(message, type = "success") {
+      const el = document.getElementById("toast");
+      el.className = `fixed bottom-5 right-5 z-50 transform transition-all duration-300 translate-y-0 opacity-100 flex items-center p-3 rounded-xl shadow-lg border text-xs font-medium ${
+        type === "success" 
+          ? "bg-emerald-50 dark:bg-emerald-950 border-emerald-300 text-emerald-800 dark:text-emerald-200" 
+          : type === "warning"
+          ? "bg-amber-50 dark:bg-amber-950 border-amber-300 text-amber-800 dark:text-amber-200"
+          : "bg-red-50 dark:bg-red-950 border-red-300 text-red-800 dark:text-red-200"
+      }`;
+      el.innerHTML = `
+        <span class="mr-2">${type === 'success' ? '✓' : type === 'warning' ? '⚠' : '✕'}</span>
+        <span>${message}</span>
+      `;
+      setTimeout(() => {
+        el.classList.add("translate-y-20", "opacity-0");
+      }, 3500);
+    }
+
+    function renderNodes() {
+      const tbody = document.getElementById("nodes-table-body");
+      tbody.innerHTML = "";
+      document.getElementById("node-count-badge").innerText = appState.nodes.length;
+
+      // Update Top Status Cards
+      const currentNode = appState.nodes.find(n => n.id === appState.currentId);
+      if (currentNode) {
+        document.getElementById("stat-current-node").innerText = `#${currentNode.id} ${currentNode.name}`;
+        document.getElementById("stat-current-type").innerText = currentNode.type;
+      } else {
+        document.getElementById("stat-current-node").innerText = "未选择";
+        document.getElementById("stat-current-type").innerText = "无";
+      }
+
+      const fixedNode = appState.nodes.find(n => n.id === appState.fixedProxyId);
+      if (fixedNode) {
+        document.getElementById("stat-fixed-node").innerText = `#${fixedNode.id} ${fixedNode.name}`;
+      }
+
+      // Populate fixed select in settings
+      const fixedSelect = document.getElementById("setting-fixed-id");
+      fixedSelect.innerHTML = "";
+      appState.nodes.forEach(n => {
+        const opt = document.createElement("option");
+        opt.value = n.id;
+        opt.text = `#${n.id} - ${n.name} (${n.type})`;
+        if (n.id === appState.fixedProxyId) opt.selected = true;
+        fixedSelect.appendChild(opt);
+      });
+
+      // Render table rows
+      appState.nodes.forEach(node => {
+        const isCurrent = node.id === appState.currentId;
+        const isFixed = node.id === appState.fixedProxyId;
+        const tr = document.createElement("tr");
+        tr.className = `transition-colors hover:bg-slate-50/70 dark:hover:bg-slate-800/40 ${
+          isCurrent ? "bg-blue-50/40 dark:bg-blue-950/20 font-medium" : ""
+        }`;
+
+        // Latency badge formatting
+        let latencyBadge = `<span class="text-slate-400">未测速</span>`;
+        if (node.testing) {
+          latencyBadge = `
+            <span class="inline-flex items-center text-blue-600 font-mono">
+              <svg class="animate-spin -ml-1 mr-1.5 h-3 w-3 text-blue-600" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+              </svg>
+              测速中...
+            </span>
+          `;
+        } else if (node.latency !== null && node.latency !== undefined) {
+          if (node.latency === "error" || node.latency <= 0) {
+            latencyBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-mono badge-danger">超时 / 失败</span>`;
+          } else if (node.latency < 250) {
+            latencyBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-mono badge-success">${node.latency} ms</span>`;
+          } else if (node.latency < 500) {
+            latencyBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-mono badge-warning">${node.latency} ms</span>`;
+          } else {
+            latencyBadge = `<span class="px-2 py-0.5 rounded text-[11px] font-mono badge-danger">${node.latency} ms</span>`;
+          }
+        }
+
+        tr.innerHTML = `
+          <td class="py-3 px-4 text-center">
+            ${isCurrent 
+              ? `<span class="w-5 h-5 mx-auto rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px] shadow-xs" title="当前活动节点">●</span>` 
+              : `<span class="w-2.5 h-2.5 mx-auto rounded-full bg-slate-300 dark:bg-slate-700 block"></span>`}
+          </td>
+          <td class="py-3 px-3 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+            ${node.id}
+          </td>
+          <td class="py-3 px-4">
+            <div class="flex items-center space-x-1.5">
+              <span class="font-semibold text-[var(--foreground,#0f172a)]">${node.name}</span>
+              ${isFixed ? `<span class="text-[10px] px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800" title="固定分流承载节点">固定分流</span>` : ""}
+            </div>
+          </td>
+          <td class="py-3 px-3">
+            <span class="text-[11px] px-2 py-0.5 rounded font-mono ${
+              node.type === 'VLESS REALITY' 
+                ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' 
+                : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+            }">
+              ${node.type}
+            </span>
+          </td>
+          <td class="py-3 px-4 font-mono text-slate-600 dark:text-slate-400">
+            ${node.server}:${node.port}
+          </td>
+          <td class="py-3 px-4 text-center" id="latency-cell-${node.id}">
+            ${latencyBadge}
+          </td>
+          <td class="py-3 px-4 text-right space-x-1">
+            <!-- Requirement 1: Manual Switch Node Button -->
+            ${isCurrent 
+              ? `<button disabled class="px-2.5 py-1 text-[11px] font-semibold rounded bg-blue-100 dark:bg-blue-950/60 text-blue-600 cursor-default">当前使用</button>` 
+              : `<button onclick="switchNode(${node.id})" class="px-2.5 py-1 text-[11px] font-semibold rounded bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition">切换</button>`}
+            
+            <!-- Single node speed test -->
+            <button onclick="testSingleNode(${node.id})" title="单节点测速" class="px-2 py-1 text-[11px] rounded border border-[var(--border,#cbd5e1)] hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+              测速
+            </button>
+
+            <!-- Edit Node Button -->
+            <button onclick="openEditNodeModal(${node.id})" title="编辑节点" class="px-2 py-1 text-[11px] rounded border border-[var(--border,#cbd5e1)] hover:bg-slate-100 dark:hover:bg-slate-800 transition">
+              编辑
+            </button>
+
+            <!-- Delete Node Button -->
+            <button onclick="deleteNode(${node.id})" ${isCurrent ? "disabled title='不能删除当前使用节点' class='opacity-30 cursor-not-allowed px-2 py-1 text-[11px] rounded border border-red-200 text-red-500'" : "title='删除节点' class='px-2 py-1 text-[11px] rounded border border-red-200 hover:bg-red-50 dark:hover:bg-red-950/30 text-red-600 transition'"}>
+              删除
+            </button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Requirement 1: Manual switch specified node
+    function switchNode(id) {
+      const node = appState.nodes.find(n => n.id === id);
+      if (!node) return;
+      
+      showToast(`正在切换至 #${id} [${node.name}] 并执行健康检查...`, "warning");
+      
+      // Simulate xray run -test, restart xc-xray, wait listener, and health check
+      setTimeout(() => {
+        appState.previousId = appState.currentId;
+        appState.currentId = id;
+        renderNodes();
+        showToast(`成功切换至节点 #${id} [${node.name}]，双出口连通正常！`, "success");
+      }, 700);
+    }
+
+    // Rollback to previous node
+    function rollbackNode() {
+      if (!appState.previousId) {
+        showToast("无上一份有效配置可供回滚", "warning");
+        return;
+      }
+      const prevId = appState.previousId;
+      showToast(`正在回滚至上一节点 #${prevId}...`, "warning");
+      setTimeout(() => {
+        appState.previousId = appState.currentId;
+        appState.currentId = prevId;
+        renderNodes();
+        showToast(`已成功回滚至上一节点 #${prevId}`, "success");
+      }, 500);
+    }
+
+    // Requirement 3: Manual Refresh Node Speed Test
+    function testSingleNode(id) {
+      const node = appState.nodes.find(n => n.id === id);
+      if (!node) return;
+      node.testing = true;
+      renderNodes();
+
+      setTimeout(() => {
+        node.testing = false;
+        // realistic latency simulation
+        const randomLatency = Math.floor(Math.random() * 350) + 110;
+        node.latency = randomLatency;
+        renderNodes();
+        showToast(`节点 #${id} 测速完成: ${randomLatency} ms`, "success");
+      }, 800 + Math.random() * 500);
+    }
+
+    function refreshAllSpeedTest() {
+      const btn = document.getElementById("btn-refresh-all");
+      const icon = document.getElementById("speed-icon-spin");
+      icon.classList.add("animate-spin");
+      btn.disabled = true;
+      showToast("正在通过独立临时监听端口并发探测各节点代理链延迟...", "warning");
+
+      appState.nodes.forEach(n => { n.testing = true; });
+      renderNodes();
+
+      let completed = 0;
+      appState.nodes.forEach((node, idx) => {
+        setTimeout(() => {
+          node.testing = false;
+          node.latency = Math.floor(Math.random() * 380) + 115;
+          completed++;
+          renderNodes();
+          if (completed === appState.nodes.length) {
+            icon.classList.remove("animate-spin");
+            btn.disabled = false;
+            showToast(`全部 ${completed} 个节点测速完成！`, "success");
+          }
+        }, 1000 + idx * 400);
+      });
+    }
+
+    // Health check test
+    function testCurrentHealth() {
+      const spin = document.getElementById("health-spin");
+      spin.classList.add("animate-spin");
+      showToast("正在测试 SOCKS5h:7890 和 HTTP:10809 出口连通性...", "warning");
+      setTimeout(() => {
+        spin.classList.remove("animate-spin");
+        showToast("测试通过：SOCKS5h(7890)=OK, HTTP(10809)=OK", "success");
+      }, 900);
+    }
+
+    // Requirement 2: Add & Edit Node Modal Handling
+    function openAddNodeModal() {
+      document.getElementById("modal-title").innerText = "添加新节点信息";
+      document.getElementById("form-node-mode").value = "add";
+      // generate next sequential id
+      const maxId = appState.nodes.reduce((max, n) => Math.max(max, n.id), 0);
+      document.getElementById("form-node-id").value = maxId + 1;
+      document.getElementById("form-node-id").disabled = false;
+      document.getElementById("form-node-name").value = "";
+      document.querySelector('input[name="node-type"][value="VLESS REALITY"]').checked = true;
+      document.getElementById("form-node-server").value = "";
+      document.getElementById("form-node-port").value = 443;
+      document.getElementById("form-node-uuid").value = "";
+      document.getElementById("form-node-sni").value = "gateway.icloud.com";
+      document.getElementById("form-node-pubkey").value = "";
+      document.getElementById("form-node-shortid").value = "";
+      document.getElementById("form-node-fingerprint").value = "chrome";
+      document.getElementById("form-node-flow").value = "xtls-rprx-vision";
+
+      toggleTypeFields();
+      document.getElementById("node-modal").classList.remove("hidden");
+    }
+
+    function openEditNodeModal(id) {
+      const node = appState.nodes.find(n => n.id === id);
+      if (!node) return;
+
+      document.getElementById("modal-title").innerText = `编辑节点 #${id} (${node.name})`;
+      document.getElementById("form-node-mode").value = "edit";
+      document.getElementById("form-node-id").value = node.id;
+      document.getElementById("form-node-id").disabled = true; // node numbering is stable
+      document.getElementById("form-node-name").value = node.name;
+      
+      const typeRadio = document.querySelector(`input[name="node-type"][value="${node.type}"]`);
+      if (typeRadio) typeRadio.checked = true;
+
+      document.getElementById("form-node-server").value = node.server;
+      document.getElementById("form-node-port").value = node.port;
+
+      if (node.type === "VLESS REALITY") {
+        document.getElementById("form-node-uuid").value = node.uuid || "";
+        document.getElementById("form-node-sni").value = node.sni || "";
+        document.getElementById("form-node-pubkey").value = node.public_key || "";
+        document.getElementById("form-node-shortid").value = node.short_id || "";
+        document.getElementById("form-node-fingerprint").value = node.fingerprint || "chrome";
+        document.getElementById("form-node-flow").value = node.flow || "xtls-rprx-vision";
+      }
+
+      toggleTypeFields();
+      document.getElementById("node-modal").classList.remove("hidden");
+    }
+
+    function closeNodeModal() {
+      document.getElementById("node-modal").classList.add("hidden");
+    }
+
+    function toggleTypeFields() {
+      const type = document.querySelector('input[name="node-type"]:checked').value;
+      const realityBox = document.getElementById("reality-fields");
+      const naiveBox = document.getElementById("naive-fields");
+      const portInput = document.getElementById("form-node-port");
+
+      if (type === "VLESS REALITY") {
+        realityBox.classList.remove("hidden");
+        naiveBox.classList.add("hidden");
+        if (portInput.value == 45321) portInput.value = 443;
+      } else {
+        realityBox.classList.add("hidden");
+        naiveBox.classList.remove("hidden");
+        if (portInput.value == 443) portInput.value = 45321;
+      }
+    }
+
+    function handleSaveNode(e) {
+      e.preventDefault();
+      const mode = document.getElementById("form-node-mode").value;
+      const id = parseInt(document.getElementById("form-node-id").value);
+      const name = document.getElementById("form-node-name").value.trim();
+      const type = document.querySelector('input[name="node-type"]:checked').value;
+      const server = document.getElementById("form-node-server").value.trim();
+      const port = parseInt(document.getElementById("form-node-port").value);
+
+      if (mode === "add") {
+        if (appState.nodes.some(n => n.id === id)) {
+          alert(`节点 ID ${id} 已存在，请指定未使用的编号！`);
+          return;
+        }
+        const newNode = { id, name, type, server, port, latency: null };
+        if (type === "VLESS REALITY") {
+          newNode.uuid = document.getElementById("form-node-uuid").value.trim();
+          newNode.sni = document.getElementById("form-node-sni").value.trim();
+          newNode.public_key = document.getElementById("form-node-pubkey").value.trim();
+          newNode.short_id = document.getElementById("form-node-shortid").value.trim();
+          newNode.fingerprint = document.getElementById("form-node-fingerprint").value;
+          newNode.flow = document.getElementById("form-node-flow").value;
+        }
+        appState.nodes.push(newNode);
+        showToast(`已成功添加节点 #${id} [${name}]`, "success");
+      } else {
+        const node = appState.nodes.find(n => n.id === id);
+        if (node) {
+          node.name = name;
+          node.type = type;
+          node.server = server;
+          node.port = port;
+          if (type === "VLESS REALITY") {
+            node.uuid = document.getElementById("form-node-uuid").value.trim();
+            node.sni = document.getElementById("form-node-sni").value.trim();
+            node.public_key = document.getElementById("form-node-pubkey").value.trim();
+            node.short_id = document.getElementById("form-node-shortid").value.trim();
+            node.fingerprint = document.getElementById("form-node-fingerprint").value;
+            node.flow = document.getElementById("form-node-flow").value;
+          }
+          showToast(`已成功更新节点 #${id} [${name}]`, "success");
+        }
+      }
+
+      closeNodeModal();
+      renderNodes();
+    }
+
+    function deleteNode(id) {
+      if (id === appState.currentId) {
+        alert("无法删除当前正在生效的活动节点！请先切换至其他节点后再删除。");
+        return;
+      }
+      if (id === appState.fixedProxyId) {
+        alert("该节点被指定为 fixed_proxy_id (固定分流节点)，请先在设置中修改固定节点再删除。");
+        return;
+      }
+      if (confirm(`确认要删除节点 #${id} 吗？`)) {
+        appState.nodes = appState.nodes.filter(n => n.id !== id);
+        renderNodes();
+        showToast(`已删除节点 #${id}`, "success");
+      }
+    }
+
+    // Settings tab handling
+    function switchTab(tab) {
+      const nodesTab = document.getElementById("tab-content-nodes");
+      const settingsTab = document.getElementById("tab-content-settings");
+      const btnNodes = document.getElementById("tab-btn-nodes");
+      const btnSettings = document.getElementById("tab-btn-settings");
+
+      if (tab === "nodes") {
+        nodesTab.classList.remove("hidden");
+        settingsTab.classList.add("hidden");
+        btnNodes.className = "pb-3 border-b-2 border-blue-600 text-blue-600 font-bold flex items-center gap-2";
+        btnSettings.className = "pb-3 border-b-2 border-transparent text-[var(--muted-foreground,#64748b)] hover:text-[var(--foreground,#0f172a)] flex items-center gap-2";
+      } else {
+        nodesTab.classList.add("hidden");
+        settingsTab.classList.remove("hidden");
+        btnSettings.className = "pb-3 border-b-2 border-blue-600 text-blue-600 font-bold flex items-center gap-2";
+        btnNodes.className = "pb-3 border-b-2 border-transparent text-[var(--muted-foreground,#64748b)] hover:text-[var(--foreground,#0f172a)] flex items-center gap-2";
+      }
+    }
+
+    function saveSettings(e) {
+      e.preventDefault();
+      const fixedId = parseInt(document.getElementById("setting-fixed-id").value);
+      appState.fixedProxyId = fixedId;
+      renderNodes();
+
+      const tip = document.getElementById("settings-save-tip");
+      tip.classList.remove("hidden");
+      setTimeout(() => tip.classList.add("hidden"), 3000);
+      showToast("全局设置已保存，固定分流节点已更新！", "success");
+    }
+
+    // Initialize on load
+    window.addEventListener("DOMContentLoaded", () => {
+      renderNodes();
+    });
+  </script>
+</body>
+</html>

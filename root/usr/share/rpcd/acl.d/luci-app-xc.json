@@ -1,0 +1,26 @@
+{
+	"luci-app-xc": {
+		"description": "Grant access to xc xray manager",
+		"read": {
+			"ubus": {
+				"luci.xc": [ "*" ]
+			},
+			"uci": [ "xc" ],
+			"file": {
+				"/etc/xc/nodes.json": [ "read" ],
+				"/etc/xc/settings.json": [ "read" ],
+				"/etc/xc/current": [ "read" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.xc": [ "*" ]
+			},
+			"uci": [ "xc" ],
+			"file": {
+				"/etc/xc/nodes.json": [ "write" ],
+				"/etc/xc/settings.json": [ "write" ]
+			}
+		}
+	}
+}

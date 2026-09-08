@@ -1,0 +1,8 @@
+#!/bin/sh
+
+[ -d /etc/xc ] || mkdir -p /etc/xc
+[ -f /etc/xc/settings.json ] || cp /etc/xc/settings.example.json /etc/xc/settings.json 2>/dev/null
+[ -f /etc/xc/nodes.json ] || cp /etc/xc/nodes.example.json /etc/xc/nodes.json 2>/dev/null
+chmod +x /usr/bin/xc /usr/libexec/rpcd/luci.xc /etc/init.d/xc-xray 2>/dev/null
+
+exit 0
