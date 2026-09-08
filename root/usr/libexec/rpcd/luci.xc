@@ -58,10 +58,11 @@ local methods = {
             output_json({ code = 1, message = "invalid node id" })
             return
         end
-        local p = io.popen("/usr/bin/xc switch " .. tostring(id) .. " 2>&1")
-        local out = p and p:read("*a") or ""
-        local ok = p and p:close()
-        output_json({ code = ok and 0 or 1, message = out })
+        local tmp_log = "/tmp/xc-switch.log"
+        local ret = os.execute("/usr/bin/xc switch " .. tostring(id) .. " >" .. tmp_log .. " 2>&1")
+        local out = read_file(tmp_log) or ""
+        os.remove(tmp_log)
+        output_json({ code = (ret == 0) and 0 or 1, message = out })
     end,
 
     probe_node = function(params)
@@ -131,17 +132,19 @@ local methods = {
     end,
 
     rollback = function()
-        local p = io.popen("/usr/bin/xc rollback 2>&1")
-        local out = p and p:read("*a") or ""
-        local ok = p and p:close()
-        output_json({ code = ok and 0 or 1, message = out })
+        local tmp_log = "/tmp/xc-rollback.log"
+        local ret = os.execute("/usr/bin/xc rollback >" .. tmp_log .. " 2>&1")
+        local out = read_file(tmp_log) or ""
+        os.remove(tmp_log)
+        output_json({ code = (ret == 0) and 0 or 1, message = out })
     end,
 
     test_health = function()
-        local p = io.popen("/usr/bin/xc test 2>&1")
-        local out = p and p:read("*a") or ""
-        local ok = p and p:close()
-        output_json({ code = ok and 0 or 1, message = out })
+        local tmp_log = "/tmp/xc-health.log"
+        local ret = os.execute("/usr/bin/xc test >" .. tmp_log .. " 2>&1")
+        local out = read_file(tmp_log) or ""
+        os.remove(tmp_log)
+        output_json({ code = (ret == 0) and 0 or 1, message = out })
     end,
 
     get_settings = function()
@@ -191,18 +194,7 @@ local methods = {
 -- rpcd Dispatcher
 local action = arg[1]
 if action == "list" then
-    output_json({
-        get_status = {},
-        get_nodes = {},
-        switch_node = { id = 0 },
-        probe_node = { id = 0 },
-        save_node = { node = {} },
-        delete_node = { id = 0 },
-        rollback = {},
-        test_health = {},
-        get_settings = {},
-        save_settings = { settings = {}, fixed_proxy_id = 0 }
-    })
+    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"rollback":{},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0}}\n')
 elseif action == "call" then
     local method = arg[2]
     local fn = methods[method]

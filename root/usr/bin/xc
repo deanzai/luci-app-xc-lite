@@ -278,12 +278,20 @@ local function select_node(id)
         os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
         return false, "service restart failed"
     end
-    wait_for_listener(7890)
-    local ok = run("curl --silent --show-error --max-time 15 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":7890 " .. setting("health_url") .. " >/dev/null 2>&1")
+    local ok = false
+    for _ = 1, 25 do
+        sleep(1)
+        if check_port_listening(7890) and run("curl --silent --show-error --max-time 3 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":7890 " .. setting("health_url") .. " >/dev/null 2>&1") then
+            ok = true
+            break
+        end
+    end
     if not ok then
-        os.execute("cp -f " .. shell_quote(PREV_CONFIG) .. " " .. shell_quote(CONFIG_FILE))
-        os.execute("cp -f " .. shell_quote(PREV_CURRENT) .. " " .. shell_quote(CURRENT_FILE))
-        os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+        if os.execute("test -s " .. shell_quote(PREV_CONFIG)) == 0 then
+            os.execute("cp -f " .. shell_quote(PREV_CONFIG) .. " " .. shell_quote(CONFIG_FILE))
+            os.execute("cp -f " .. shell_quote(PREV_CURRENT) .. " " .. shell_quote(CURRENT_FILE))
+            os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+        end
         io.stderr:write("health check failed; rolled back\n")
         return false, "health check failed; rolled back"
     end

@@ -27,3 +27,5 @@ geoip.dat
 geosite.dat
 *.zip
 *.tar.*
+*.ipk
+*.apk
