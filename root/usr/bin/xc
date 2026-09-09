@@ -21,6 +21,8 @@ local DEFAULT_SETTINGS = {
     proxy_host = "127.0.0.1",
     probe_url = "http://www.gstatic.com/generate_204",
     health_url = "http://www.gstatic.com/generate_204",
+    probe_timeout = 5,
+    probe_concurrency = 3,
     core_source = "custom",
     asset_source = "custom"
 }
@@ -243,6 +245,43 @@ local function wait_for_listener(port)
     return false
 end
 
+local function wait_for_probe_listener(port)
+    local ok, nixio = pcall(require, "nixio")
+    if ok and nixio and nixio.socket then
+        for _ = 1, 30 do
+            local s = nixio.socket("inet", "stream")
+            if s then
+                s:setblocking(false)
+                local connected, err = s:connect("127.0.0.1", tostring(port))
+                if connected then
+                    s:close()
+                    return true
+                end
+                if err == nixio.const.EINPROGRESS or err == nixio.const.EALREADY or err == nixio.const.EWOULDBLOCK then
+                    local pfd = { { fd = s, events = nixio.poll_flags("out", "err") } }
+                    local ready = nixio.poll(pfd, 100)
+                    if ready and ready > 0 and s:getsockopt("socket", "error") == 0 then
+                        s:close()
+                        return true
+                    end
+                end
+                s:close()
+            end
+            if nixio.nanosleep then
+                nixio.nanosleep(0, 50000000)
+            end
+        end
+        return false
+    else
+        for _ = 1, 10 do
+            if check_port_listening(port) then return true end
+            sleep(1)
+        end
+        return check_port_listening(port)
+    end
+end
+
+
 local function nodes_data()
     local raw = read(NODES_FILE)
     if not raw then
@@ -312,6 +351,26 @@ local function make_outbound(node, tag)
     end
     return socks_outbound(node, tag)
 end
+
+local function make_probe_config(node, socks_port)
+    return {
+        log = { loglevel = "none" },
+        inbounds = {
+            {
+                tag = "probe-in",
+                listen = "127.0.0.1",
+                port = socks_port,
+                protocol = "socks",
+                settings = { auth = "noauth", udp = false }
+            }
+        },
+        outbounds = {
+            make_outbound(node, "proxy"),
+            { tag = "direct", protocol = "freedom" }
+        }
+    }
+end
+
 
 local function make_config(node, socks_port, http_port)
     local s_host = setting("socks_host") or setting("listen_host")
@@ -394,38 +453,82 @@ local function output_node(node, latency)
     io.write(string.format("%s %2d  [%-18s] %-28s %s\n", marker, tonumber(node.id), node.type, node.name, value))
 end
 
-local function probe(node, port)
+local function probe(node, port, timeout_sec)
+    local timeout = tonumber(timeout_sec) or tonumber(setting("probe_timeout")) or 5
+    if timeout < 1 then timeout = 1 elseif timeout > 15 then timeout = 15 end
+    local connect_timeout = (timeout > 2) and 3 or (timeout > 1 and 2 or 1)
+
+    local target_url = setting("probe_url") or "http://www.gstatic.com/generate_204"
+    local proxy_host = setting("proxy_host") or "127.0.0.1"
+
+    -- 智能通道复用：若为当前运行的活动节点，直接使用现有 SOCKS 代理测速
+    local cur_id = current_id()
+    local p = io.popen("pgrep -f 'xray run -c /etc/xc/config.json'")
+    local main_pid = p and p:read("*l")
+    if p then p:close() end
+
+    local s_port = tonumber(setting("socks_port") or 7890)
+    if main_pid and cur_id and tonumber(node.id) == cur_id and check_port_listening(s_port) then
+        local curl_cmd = string.format(
+            "curl --silent --show-error --connect-timeout %d --max-time %d -o /dev/null -w '%%{time_total} %%{http_code}' --proxy socks5h://%s:%d %s 2>/dev/null",
+            connect_timeout, timeout, proxy_host, s_port, shell_quote(target_url)
+        )
+        local c = io.popen(curl_cmd)
+        local result = c and c:read("*a") or ""
+        if c then c:close() end
+        local seconds, status = result:match("([%d%.]+)%s+(%d%d%d)")
+        local n = tonumber(seconds)
+        if not n or status == "000" then return nil end
+        return math.floor(n * 1000 + 0.5)
+    end
+
+    -- 非活动节点：拉起极简微型实例进行测试（无 geosite/geoip 依赖，启动毫秒级）
     local ready, err_msg, st = ensure_core_files()
     if not ready then
         return nil
     end
-    port = port or (18080 + tonumber(node.id))
+
+    port = port or (18080 + (tonumber(node.id) % 1000))
     local config = "/tmp/xc-probe-" .. tostring(node.id) .. ".json"
     local log = "/tmp/xc-probe-" .. tostring(node.id) .. ".log"
     local pidfile = "/tmp/xc-probe-" .. tostring(node.id) .. ".pid"
-    local data = nodes_data()
-    local probe_config = make_config_for(data, node, port, port + 1)
-    table.insert(probe_config.routing.rules, 1, {type = "field", domain = {"full:www.gstatic.com"}, outboundTag = "proxy-selected"})
+
+    local probe_config = make_probe_config(node, port)
     write(config, json.stringify(probe_config, 1))
-    if not run(xray_command("run -test -c " .. shell_quote(config) .. " >/dev/null 2>&1", st)) then
+
+    local p_cmd = xray_command("run -c " .. config .. " >" .. log .. " 2>&1 & echo $!", st)
+    local p_inst = io.popen("sh -c " .. shell_quote(p_cmd))
+    local pid = p_inst and p_inst:read("*l")
+    if p_inst then p_inst:close() end
+
+    if not pid then
         os.remove(config)
         return nil
     end
-    local p = io.popen("sh -c " .. shell_quote(xray_command("run -c " .. config .. " >" .. log .. " 2>&1 & echo $!", st)))
-    local pid = p and p:read("*l")
-    if p then p:close() end
-    if not pid then os.remove(config); return nil end
     write(pidfile, pid)
-    if not wait_for_listener(port) then
-        os.execute("kill " .. pid .. " >/dev/null 2>&1")
-        os.remove(config); os.remove(log); os.remove(pidfile)
+
+    local cleanup = function()
+        os.execute("kill -9 " .. pid .. " >/dev/null 2>&1")
+        os.remove(config)
+        os.remove(log)
+        os.remove(pidfile)
+    end
+
+    if not wait_for_probe_listener(port) then
+        cleanup()
         return nil
     end
-    local c = io.popen("curl --silent --show-error --max-time 8 -o /dev/null -w '%{time_total} %{http_code}' --proxy socks5h://" .. setting("proxy_host") .. ":" .. tostring(port) .. " " .. setting("probe_url") .. " 2>/dev/null")
+
+    local curl_cmd = string.format(
+        "curl --silent --show-error --connect-timeout %d --max-time %d -o /dev/null -w '%%{time_total} %%{http_code}' --proxy socks5h://127.0.0.1:%d %s 2>/dev/null",
+        connect_timeout, timeout, port, shell_quote(target_url)
+    )
+    local c = io.popen(curl_cmd)
     local result = c and c:read("*a") or ""
     if c then c:close() end
-    os.execute("kill " .. pid .. " >/dev/null 2>&1")
-    os.remove(config); os.remove(log); os.remove(pidfile)
+
+    cleanup()
+
     local seconds, status = result:match("([%d%.]+)%s+(%d%d%d)")
     local n = tonumber(seconds)
     if not n or status == "000" then return nil end
@@ -435,7 +538,7 @@ end
 local function list_nodes(data)
     io.write("ID  TYPE                 NODE                          LATENCY\n")
     for _, node in ipairs(data.nodes) do
-        output_node(node, probe(node, 18080 + tonumber(node.id)))
+        output_node(node, probe(node, 18080 + (tonumber(node.id) % 1000)))
     end
 end
 
@@ -559,14 +662,15 @@ elseif command == "status" then
     io.write(json.stringify(status, 1) .. "\n")
 elseif command == "probe" then
     local id = tonumber(arg[2])
+    local timeout = tonumber(arg[3])
     if not id then
-        io.stderr:write("usage: xc probe <id>\n"); os.exit(2)
+        io.stderr:write("usage: xc probe <id> [timeout]\n"); os.exit(2)
     end
     local node = find_node(data, id)
     if not node then
         io.stderr:write("unknown node: " .. tostring(id) .. "\n"); os.exit(1)
     end
-    local lat = probe(node, 18080 + id)
+    local lat = probe(node, 18080 + (id % 1000), timeout)
     local res = { id = id, latency = lat or -1, success = (lat ~= nil) }
     io.write(json.stringify(res, 1) .. "\n")
 elseif command == "switch" then

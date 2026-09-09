@@ -15,6 +15,39 @@
 .xc-hidden { display:none !important; }
 .xc-spin { display:inline-block; animation:xc-rotate 1s linear infinite; }
 @keyframes xc-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+
+.xc-tab-item {
+    cursor: pointer;
+    padding: 9px 20px;
+    border-radius: 6px 6px 0 0;
+    transition: all 0.2s ease;
+    display: inline-block;
+    font-size: 13px;
+    user-select: none;
+}
+.xc-tab-active {
+    background: #2563eb !important;
+    color: #ffffff !important;
+    font-weight: bold;
+}
+.xc-tab-inactive {
+    background: #e5e7eb;
+    color: #4b5563;
+}
+.xc-tab-inactive:hover {
+    background: #d1d5db;
+    color: #1f2937;
+}
+@media (prefers-color-scheme: dark) {
+    .xc-tab-inactive {
+        background: #374151;
+        color: #d1d5db;
+    }
+    .xc-tab-inactive:hover {
+        background: #4b5563;
+        color: #f3f4f6;
+    }
+}
 </style>
 
 <div class="cbi-map">
@@ -74,8 +107,149 @@
         </div>
     </fieldset>
 
-    <!-- 核心组件与规则文件管理 -->
-    <fieldset class="cbi-section">
+    <!-- 顶部 Tab 选项卡导航 -->
+    <ul class="cbi-tabmenu" id="xc-tabs" style="display:flex; margin:18px 0 15px 0; padding:0; list-style:none; border-bottom:2px solid #2563eb; gap:6px;">
+        <li id="tab-btn-nodes" class="xc-tab-item xc-tab-active" onclick="switchTab('nodes')">
+            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">📋 <%=translate("节点列表与测速")%></a>
+        </li>
+        <li id="tab-btn-settings" class="xc-tab-item xc-tab-inactive" onclick="switchTab('settings')">
+            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">⚙️ <%=translate("全局基础设置")%></a>
+        </li>
+        <li id="tab-btn-core" class="xc-tab-item xc-tab-inactive" onclick="switchTab('core')">
+            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">📦 <%=translate("核心组件与规则")%></a>
+        </li>
+    </ul>
+
+    <!-- 选项卡 1: 节点管理清单 -->
+    <fieldset class="cbi-section" id="sec-nodes" style="display:block;">
+        <legend><%=translate("节点列表与管理")%></legend>
+        <div class="cbi-section-actions" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+                <button class="cbi-button cbi-button-save" onclick="openAddNodeModal()">+ <%=translate("添加节点信息")%></button>
+                <button id="btn-refresh-all" class="cbi-button cbi-button-action" style="margin-left:8px;" onclick="doRefreshAllSpeed()"><%=translate("手动刷新全部测速")%></button>
+            </div>
+            <div style="font-size:12px; color:#666;">
+                <span style="margin-right:8px;"><span style="color:#10b981; font-weight:bold;">&lt;250ms</span> <%=translate("极优")%></span>
+                <span style="margin-right:8px;"><span style="color:#f59e0b; font-weight:bold;">250~500ms</span> <%=translate("良好")%></span>
+                <span><span style="color:#ef4444; font-weight:bold;">&gt;500ms</span> <%=translate("较慢")%></span>
+            </div>
+        </div>
+
+        <div class="cbi-section-node">
+            <table class="table cbi-section-table" id="xc-nodes-table">
+                <tr class="tr table-titles">
+                    <th class="th" style="width:50px; text-align:center;"><%=translate("状态")%></th>
+                    <th class="th" style="width:60px; text-align:center;"><%=translate("编号")%></th>
+                    <th class="th"><%=translate("节点名称")%></th>
+                    <th class="th" style="width:160px;"><%=translate("协议类型")%></th>
+                    <th class="th"><%=translate("服务器与端口")%></th>
+                    <th class="th" style="width:130px; text-align:center;"><%=translate("完整代理延迟")%></th>
+                    <th class="th cbi-section-actions" style="width:230px; text-align:right;"><%=translate("操作")%></th>
+                </tr>
+                <tbody id="nodes-tbody">
+                    <tr><td colspan="7" style="text-align:center; padding:15px;"><%=translate("正在载入节点清单...")%></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </fieldset>
+
+    <!-- 选项卡 2: 全局基础设置 -->
+    <fieldset class="cbi-section" id="sec-settings" style="display:none;">
+        <legend><%=translate("全局运行参数与代理接口设定 (/etc/xc/settings.json)")%></legend>
+        <form id="form-settings" onsubmit="doSaveSettings(event)">
+            <div class="cbi-section-node">
+                <!-- SOCKS5 代理接口单独设定 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><strong><%=translate("SOCKS5 代理接口")%></strong></label>
+                    <div class="cbi-value-field">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
+                                <input type="text" id="setting-socks-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
+                                <input type="number" id="setting-socks-port" class="cbi-input-text" style="width:100px;" placeholder="7890">
+                            </div>
+                        </div>
+                        <div class="cbi-value-description"><%=translate("支持 TCP/UDP，客户端需配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。")%></div>
+                    </div>
+                </div>
+
+                <!-- HTTP 代理接口单独设定 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><strong><%=translate("HTTP 代理接口")%></strong></label>
+                    <div class="cbi-value-field">
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
+                                <input type="text" id="setting-http-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
+                            </div>
+                            <div>
+                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
+                                <input type="number" id="setting-http-port" class="cbi-input-text" style="width:100px;" placeholder="10809">
+                            </div>
+                        </div>
+                        <div class="cbi-value-description"><%=translate("供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。")%></div>
+                    </div>
+                </div>
+
+                <!-- 探测与目标设置 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("健康测试代理地址 (proxy_host)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-proxy-host" class="cbi-input-text" style="width:300px;">
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("延迟测速 URL (probe_url)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-probe-url" class="cbi-input-text" style="width:320px; display:inline-block;">
+                        <button type="button" class="cbi-button" style="margin-left:6px;" onclick="fillProbeUrl('http://www.gstatic.com/generate_204')">Google 204</button>
+                        <button type="button" class="cbi-button" style="margin-left:4px;" onclick="fillProbeUrl('http://cp.cloudflare.com/generate_204')">Cloudflare 204</button>
+                        <div class="cbi-value-description"><%=translate("用于真实 HTTP 204 RTT 应用层延迟探测。")%></div>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("测速超时限制 (秒)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="setting-probe-timeout" class="cbi-input-text" style="width:120px;" min="1" max="30" placeholder="5">
+                        <div class="cbi-value-description"><%=translate("单节点测速最长等待时间，默认 5 秒。超过该时限即判定为超时。")%></div>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("批量测速并发数")%></label>
+                    <div class="cbi-value-field">
+                        <input type="number" id="setting-probe-concurrency" class="cbi-input-text" style="width:120px;" min="1" max="10" placeholder="3">
+                        <div class="cbi-value-description"><%=translate("批量测速时的并发通道数量，默认 3。路由器资源有限，建议 2~4 避免打满 CPU。")%></div>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("出口连通性 URL (health_url)")%></label>
+                    <div class="cbi-value-field">
+                        <input type="text" id="setting-health-url" class="cbi-input-text" style="width:300px;">
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("固定分流节点 (fixed_proxy_id)")%></label>
+                    <div class="cbi-value-field">
+                        <select id="setting-fixed-id" class="cbi-input-select" style="width:300px;"></select>
+                        <div class="cbi-value-description"><%=translate("固定承担 OpenAI, YouTube, Google 等 geosite 访问的节点。")%></div>
+                    </div>
+                </div>
+                <div class="cbi-value">
+                    <label class="cbi-value-title"></label>
+                    <div class="cbi-value-field">
+                        <button type="submit" class="cbi-button cbi-button-save"><%=translate("保存并应用全局设置")%></button>
+                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存生效")%></span>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </fieldset>
+
+    <!-- 选项卡 3: 核心组件与规则文件管理 -->
+    <fieldset class="cbi-section" id="sec-core" style="display:none;">
         <legend><%=translate("核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)")%></legend>
         <div class="cbi-section-descr" style="margin-bottom:10px; font-size:12px; color:#666;">
             <%=translate("支持网页直接上传 Xray 核心（支持 Linux ELF 或 .zip / .tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。")%>
@@ -129,121 +303,10 @@
             </table>
         </div>
     </fieldset>
-
-    <!-- 节点管理清单 -->
-    <fieldset class="cbi-section">
-        <legend><%=translate("节点列表与管理")%></legend>
-        <div class="cbi-section-actions" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
-            <div>
-                <button class="cbi-button cbi-button-save" onclick="openAddNodeModal()">+ <%=translate("添加节点信息")%></button>
-                <button id="btn-refresh-all" class="cbi-button cbi-button-action" style="margin-left:8px;" onclick="doRefreshAllSpeed()"><%=translate("手动刷新全部测速")%></button>
-            </div>
-            <div style="font-size:12px; color:#666;">
-                <span style="margin-right:8px;"><span style="color:#10b981; font-weight:bold;">&lt;250ms</span> <%=translate("极优")%></span>
-                <span style="margin-right:8px;"><span style="color:#f59e0b; font-weight:bold;">250~500ms</span> <%=translate("良好")%></span>
-                <span><span style="color:#ef4444; font-weight:bold;">&gt;500ms</span> <%=translate("较慢")%></span>
-            </div>
-        </div>
-
-        <div class="cbi-section-node">
-            <table class="table cbi-section-table" id="xc-nodes-table">
-                <tr class="tr table-titles">
-                    <th class="th" style="width:50px; text-align:center;"><%=translate("状态")%></th>
-                    <th class="th" style="width:60px; text-align:center;"><%=translate("编号")%></th>
-                    <th class="th"><%=translate("节点名称")%></th>
-                    <th class="th" style="width:160px;"><%=translate("协议类型")%></th>
-                    <th class="th"><%=translate("服务器与端口")%></th>
-                    <th class="th" style="width:130px; text-align:center;"><%=translate("完整代理延迟")%></th>
-                    <th class="th cbi-section-actions" style="width:230px; text-align:right;"><%=translate("操作")%></th>
-                </tr>
-                <tbody id="nodes-tbody">
-                    <tr><td colspan="7" style="text-align:center; padding:15px;"><%=translate("正在载入节点清单...")%></td></tr>
-                </tbody>
-            </table>
-        </div>
-    </fieldset>
-
-    <!-- 全局参数配置 -->
-    <fieldset class="cbi-section">
-        <legend><%=translate("全局运行参数与代理接口设定 (/etc/xc/settings.json)")%></legend>
-        <form id="form-settings" onsubmit="doSaveSettings(event)">
-            <div class="cbi-section-node">
-                <!-- SOCKS5 代理接口单独设定 -->
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><strong><%=translate("SOCKS5 代理接口")%></strong></label>
-                    <div class="cbi-value-field">
-                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                            <div>
-                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
-                                <input type="text" id="setting-socks-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
-                            </div>
-                            <div>
-                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
-                                <input type="number" id="setting-socks-port" class="cbi-input-text" style="width:100px;" placeholder="7890">
-                            </div>
-                        </div>
-                        <div class="cbi-value-description"><%=translate("支持 TCP/UDP，客户端需配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。")%></div>
-                    </div>
-                </div>
-
-                <!-- HTTP 代理接口单独设定 -->
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><strong><%=translate("HTTP 代理接口")%></strong></label>
-                    <div class="cbi-value-field">
-                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                            <div>
-                                <span style="font-size:12px; color:#666;"><%=translate("绑定地址")%>:</span>
-                                <input type="text" id="setting-http-host" class="cbi-input-text" style="width:180px;" placeholder="127.0.0.1">
-                            </div>
-                            <div>
-                                <span style="font-size:12px; color:#666;"><%=translate("监听端口")%>:</span>
-                                <input type="number" id="setting-http-port" class="cbi-input-text" style="width:100px;" placeholder="10809">
-                            </div>
-                        </div>
-                        <div class="cbi-value-description"><%=translate("供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。")%></div>
-                    </div>
-                </div>
-
-                <!-- 探测与目标设置 -->
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><%=translate("健康测试代理地址 (proxy_host)")%></label>
-                    <div class="cbi-value-field">
-                        <input type="text" id="setting-proxy-host" class="cbi-input-text" style="width:300px;">
-                    </div>
-                </div>
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><%=translate("延迟测速 URL (probe_url)")%></label>
-                    <div class="cbi-value-field">
-                        <input type="text" id="setting-probe-url" class="cbi-input-text" style="width:300px;">
-                    </div>
-                </div>
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><%=translate("出口连通性 URL (health_url)")%></label>
-                    <div class="cbi-value-field">
-                        <input type="text" id="setting-health-url" class="cbi-input-text" style="width:300px;">
-                    </div>
-                </div>
-                <div class="cbi-value">
-                    <label class="cbi-value-title"><%=translate("固定分流节点 (fixed_proxy_id)")%></label>
-                    <div class="cbi-value-field">
-                        <select id="setting-fixed-id" class="cbi-input-select" style="width:300px;"></select>
-                        <div class="cbi-value-description"><%=translate("固定承担 OpenAI, YouTube, Google 等 geosite 访问的节点。")%></div>
-                    </div>
-                </div>
-                <div class="cbi-value">
-                    <label class="cbi-value-title"></label>
-                    <div class="cbi-value-field">
-                        <button type="submit" class="cbi-button cbi-button-save"><%=translate("保存并应用全局设置")%></button>
-                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存生效")%></span>
-                    </div>
-                </div>
-            </div>
-        </form>
-    </fieldset>
 </div>
 
 <!-- 添加/编辑节点模态对话框 (Modal) -->
-<div id="node-modal-mask" class="xc-modal-mask xc-hidden">
+<div id="node-modal-mask" class="xc-modal-mask xc-hidden" style="display:none;">
     <div class="xc-modal">
         <h3 id="modal-title" style="margin-top:0;"><%=translate("添加节点信息")%></h3>
         <hr style="border:0; border-top:1px solid #ddd; margin:10px 0 15px 0;">
@@ -328,7 +391,7 @@
 </div>
 
 <!-- 文件上传进度条模态对话框 (Upload Progress Modal) -->
-<div id="xc-upload-modal-mask" class="xc-modal-mask xc-hidden">
+<div id="xc-upload-modal-mask" class="xc-modal-mask xc-hidden" style="display:none;">
     <div class="xc-modal" style="max-width:520px; padding:22px; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,0.3);">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #eee; padding-bottom:10px;">
             <h3 style="margin:0; font-size:16px; font-weight:600; display:flex; align-items:center; color:#1f2937;">
@@ -390,17 +453,19 @@ function loadAll() {
         fetchJson("get_nodes"),
         fetchJson("get_settings")
     ]).then(function(results) {
-        if (results[0]) appData.status = results[0];
-        if (results[1]) appData.nodesData = results[1];
-        if (results[2]) appData.settings = results[2];
+        if (results && results[0]) appData.status = results[0];
+        if (results && results[1]) appData.nodesData = results[1];
+        if (results && results[2]) appData.settings = results[2];
         renderAll();
+    }).catch(function(err) {
+        console.error("loadAll error:", err);
     });
 }
 
 function renderAll() {
-    renderStatus();
-    renderNodes();
-    renderSettings();
+    try { renderStatus(); } catch(e) { console.error("renderStatus error:", e); }
+    try { renderNodes(); } catch(e) { console.error("renderNodes error:", e); }
+    try { renderSettings(); } catch(e) { console.error("renderSettings error:", e); }
 }
 
 function renderStatus() {
@@ -594,7 +659,9 @@ function closeUploadModal() {
         curUploadXhr.abort();
         curUploadXhr = null;
     }
-    document.getElementById("xc-upload-modal-mask").classList.add("xc-hidden");
+    var mask = document.getElementById("xc-upload-modal-mask");
+    mask.classList.add("xc-hidden");
+    mask.style.display = "none";
 }
 
 function cancelUpload() {
@@ -655,6 +722,7 @@ function doUploadAsset(type, title) {
         closeX.style.display = "none";
         icon.innerText = "📤";
         mask.classList.remove("xc-hidden");
+        mask.style.display = "flex";
 
         var formData = new FormData();
         formData.append("type", type);
@@ -843,6 +911,31 @@ function renderNodes() {
     });
 }
 
+function switchTab(tabId) {
+    var tabs = ["nodes", "settings", "core"];
+    tabs.forEach(function(t) {
+        var sec = document.getElementById("sec-" + t);
+        var btn = document.getElementById("tab-btn-" + t);
+        if (t === tabId) {
+            if (sec) sec.style.display = "block";
+            if (btn) {
+                btn.className = "xc-tab-item xc-tab-active";
+            }
+        } else {
+            if (sec) sec.style.display = "none";
+            if (btn) {
+                btn.className = "xc-tab-item xc-tab-inactive";
+            }
+        }
+    });
+    try { sessionStorage.setItem("xc_active_tab", tabId); } catch(e) {}
+}
+
+function fillProbeUrl(url) {
+    var input = document.getElementById("setting-probe-url");
+    if (input) input.value = url;
+}
+
 function renderSettings() {
     var s = appData.settings || {};
     document.getElementById("setting-socks-host").value = s.socks_host || s.listen_host || "127.0.0.1";
@@ -853,6 +946,8 @@ function renderSettings() {
     document.getElementById("setting-proxy-host").value = s.proxy_host || "127.0.0.1";
     document.getElementById("setting-probe-url").value = s.probe_url || "http://www.gstatic.com/generate_204";
     document.getElementById("setting-health-url").value = s.health_url || "http://www.gstatic.com/generate_204";
+    document.getElementById("setting-probe-timeout").value = s.probe_timeout || 5;
+    document.getElementById("setting-probe-concurrency").value = s.probe_concurrency || 3;
 
     var sel = document.getElementById("setting-fixed-id");
     sel.innerHTML = "";
@@ -905,7 +1000,8 @@ function doSwitchNode(id) {
 function doProbeNode(id) {
     var cell = document.getElementById("latency-cell-" + id);
     if (cell) cell.innerHTML = '<span class="xc-spin" style="color:#2563eb;">⟳</span> <%=translate("测速中...")%>';
-    fetch(BASE_URL + "/probe_node?id=" + id).then(function(r) { return r.json(); }).then(function(res) {
+    var timeout = (appData.settings && appData.settings.probe_timeout) || 5;
+    fetch(BASE_URL + "/probe_node?id=" + id + "&timeout=" + timeout).then(function(r) { return r.json(); }).then(function(res) {
         if (!cell) return;
         if (res && res.latency > 0) {
             var color = res.latency < 250 ? "#10b981" : (res.latency < 500 ? "#f59e0b" : "#ef4444");
@@ -913,31 +1009,70 @@ function doProbeNode(id) {
         } else {
             cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("超时/失败")%></span>';
         }
+    }).catch(function() {
+        if (cell) cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("请求失败")%></span>';
     });
 }
 
+var isSpeedTesting = false;
+
 function doRefreshAllSpeed() {
     var btn = document.getElementById("btn-refresh-all");
-    btn.disabled = true;
-    btn.innerText = "<%=translate('正在批量测速...')%>";
+    if (isSpeedTesting) {
+        isSpeedTesting = false;
+        btn.innerText = "<%=translate('正在停止...')%>";
+        btn.disabled = true;
+        return;
+    }
 
     var nodes = appData.nodesData.nodes || [];
-    var promises = nodes.map(function(n) {
-        return fetch(BASE_URL + "/probe_node?id=" + n.id).then(function(r) { return r.json(); }).then(function(res) {
-            var cell = document.getElementById("latency-cell-" + n.id);
-            if (!cell) return;
-            if (res && res.latency > 0) {
-                var color = res.latency < 250 ? "#10b981" : (res.latency < 500 ? "#f59e0b" : "#ef4444");
-                cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
-            } else {
-                cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("超时/失败")%></span>';
-            }
-        });
-    });
+    if (nodes.length === 0) return;
 
-    Promise.all(promises).then(function() {
-        btn.disabled = false;
+    isSpeedTesting = true;
+    btn.className = "cbi-button cbi-button-reset";
+    btn.innerText = "⏹ " + "<%=translate('停止测速')%>";
+    btn.disabled = false;
+
+    var concurrency = (appData.settings && appData.settings.probe_concurrency) || 3;
+    var timeout = (appData.settings && appData.settings.probe_timeout) || 5;
+    var queue = nodes.slice();
+
+    function runNext() {
+        if (!isSpeedTesting || queue.length === 0) return Promise.resolve();
+        var node = queue.shift();
+        var cell = document.getElementById("latency-cell-" + node.id);
+        if (cell) cell.innerHTML = '<span class="xc-spin" style="color:#2563eb;">⟳</span> <%=translate("测速中...")%>';
+
+        return fetch(BASE_URL + "/probe_node?id=" + node.id + "&timeout=" + timeout)
+            .then(function(r) { return r.json(); })
+            .then(function(res) {
+                if (cell) {
+                    if (res && res.latency > 0) {
+                        var color = res.latency < 250 ? "#10b981" : (res.latency < 500 ? "#f59e0b" : "#ef4444");
+                        cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
+                    } else {
+                        cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("超时/失败")%></span>';
+                    }
+                }
+            })
+            .catch(function() {
+                if (cell) cell.innerHTML = '<span style="color:#ef4444; font-size:11px;"><%=translate("请求失败")%></span>';
+            })
+            .then(function() {
+                return runNext();
+            });
+    }
+
+    var workers = [];
+    for (var i = 0; i < concurrency; i++) {
+        workers.push(runNext());
+    }
+
+    Promise.all(workers).then(function() {
+        isSpeedTesting = false;
+        btn.className = "cbi-button cbi-button-action";
         btn.innerText = "<%=translate('手动刷新全部测速')%>";
+        btn.disabled = false;
     });
 }
 
@@ -1030,7 +1165,9 @@ function openAddNodeModal() {
     document.getElementById("form-flow").value = "xtls-rprx-vision";
 
     toggleFormFields();
-    document.getElementById("node-modal-mask").classList.remove("xc-hidden");
+    var mask = document.getElementById("node-modal-mask");
+    mask.classList.remove("xc-hidden");
+    mask.style.display = "flex";
 }
 
 function openEditNodeModal(id) {
@@ -1053,11 +1190,15 @@ function openEditNodeModal(id) {
     document.getElementById("form-flow").value = node.flow || "xtls-rprx-vision";
 
     toggleFormFields();
-    document.getElementById("node-modal-mask").classList.remove("xc-hidden");
+    var mask = document.getElementById("node-modal-mask");
+    mask.classList.remove("xc-hidden");
+    mask.style.display = "flex";
 }
 
 function closeModal() {
-    document.getElementById("node-modal-mask").classList.add("xc-hidden");
+    var mask = document.getElementById("node-modal-mask");
+    mask.classList.add("xc-hidden");
+    mask.style.display = "none";
 }
 
 function toggleFormFields() {
@@ -1129,7 +1270,9 @@ function doSaveSettings(ev) {
             http_port: Number(document.getElementById("setting-http-port").value.trim()),
             proxy_host: document.getElementById("setting-proxy-host").value.trim(),
             probe_url: document.getElementById("setting-probe-url").value.trim(),
-            health_url: document.getElementById("setting-health-url").value.trim()
+            health_url: document.getElementById("setting-health-url").value.trim(),
+            probe_timeout: Number(document.getElementById("setting-probe-timeout").value.trim()) || 5,
+            probe_concurrency: Number(document.getElementById("setting-probe-concurrency").value.trim()) || 3
         },
         fixed_proxy_id: Number(document.getElementById("setting-fixed-id").value)
     };
@@ -1150,7 +1293,18 @@ function doSaveSettings(ev) {
     });
 }
 
-window.addEventListener("DOMContentLoaded", loadAll);
+function initPage() {
+    loadAll();
+    var savedTab = "nodes";
+    try { savedTab = sessionStorage.getItem("xc_active_tab") || "nodes"; } catch(e) {}
+    switchTab(savedTab);
+}
+
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", initPage);
+} else {
+    initPage();
+}
 </script>
 
 <%+footer%>

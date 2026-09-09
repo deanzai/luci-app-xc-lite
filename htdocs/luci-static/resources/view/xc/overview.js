@@ -32,7 +32,7 @@ var callSwitchNode = rpc.declare({
 var callProbeNode = rpc.declare({
 	object: 'luci.xc',
 	method: 'probe_node',
-	params: [ 'id' ],
+	params: [ 'id', 'timeout' ],
 	expect: {}
 });
 
@@ -735,14 +735,15 @@ return view.extend({
 						'style': 'margin-left:4px;',
 						'click': function(ev) {
 							var cell = document.getElementById(latencyId);
-							if (cell) cell.innerHTML = '<span style="color:#2563eb;">测速中...</span>';
-							callProbeNode(node.id).then(function(res) {
+							if (cell) cell.innerHTML = '<span style="color:#2563eb;">' + _('测速中...') + '</span>';
+							var timeout = Number((settingsData && settingsData.probe_timeout) || 5);
+							callProbeNode(node.id, timeout).then(function(res) {
 								if (!cell) return;
 								if (res && res.latency > 0) {
-									var color = res.latency < 250 ? '#10b981' : (res.latency < 500 ? '#f59e0b' : '#ef4444');
+									var color = res.latency < 200 ? '#10b981' : (res.latency < 500 ? '#f59e0b' : '#ef4444');
 									cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
 								} else {
-									cell.innerHTML = '<span style="color:#ef4444; font-size:11px;">超时 / 失败</span>';
+									cell.innerHTML = '<span style="color:#ef4444; font-size:11px;">' + _('超时 / 失败') + '</span>';
 								}
 							});
 						}
@@ -782,8 +783,115 @@ return view.extend({
 		});
 		}
 
+		var probeStatusSpan = E('span', { 'style': 'margin-left:10px; font-size:12px; color:#2563eb; font-weight:bold;' }, '');
+		var probeBtn;
+		var isProbing = false;
+
+		var stopProbing = function() {
+			self._probeAborted = true;
+			isProbing = false;
+			if (probeBtn) {
+				probeBtn.disabled = false;
+				probeBtn.className = 'cbi-button cbi-button-action';
+				probeBtn.style.cssText = 'margin-left:8px; background-color:#10b981; color:#fff;';
+				probeBtn.innerText = _('⚡ 全部测速');
+			}
+			probeStatusSpan.innerText = _('已停止测速');
+			setTimeout(function() {
+				if (!isProbing && probeStatusSpan.innerText === _('已停止测速')) {
+					probeStatusSpan.innerText = '';
+				}
+			}, 3000);
+		};
+
+		probeBtn = E('button', {
+			'class': 'cbi-button cbi-button-action',
+			'style': 'margin-left:8px; background-color:#10b981; color:#fff;',
+			'click': function(ev) {
+				if (isProbing) {
+					stopProbing();
+					return;
+				}
+				if (!nodes || nodes.length === 0) {
+					ui.addNotification(null, E('p', {}, _('当前无可用节点进行测速')), 'warning');
+					return;
+				}
+
+				isProbing = true;
+				self._probeAborted = false;
+				probeBtn.className = 'cbi-button cbi-button-reset';
+				probeBtn.style.cssText = 'margin-left:8px; background-color:#ef4444; color:#fff; border-color:#dc2626;';
+				probeBtn.innerText = '■ ' + _('停止测速');
+
+				var concurrency = Number((settingsData && settingsData.probe_concurrency) || 3);
+				if (isNaN(concurrency) || concurrency < 1) concurrency = 3;
+				var timeout = Number((settingsData && settingsData.probe_timeout) || 5);
+				if (isNaN(timeout) || timeout < 1) timeout = 5;
+
+				var total = nodes.length;
+				var completed = 0;
+				var currentIndex = 0;
+
+				probeStatusSpan.innerText = _('测速中 (0/') + total + ')...';
+
+				nodes.forEach(function(n) {
+					var cell = document.getElementById('latency-cell-' + n.id);
+					if (cell) cell.innerHTML = '<span style="color:#9ca3af;">' + _('等待中...') + '</span>';
+				});
+
+				var runWorker = function() {
+					if (self._probeAborted || currentIndex >= total) {
+						return Promise.resolve();
+					}
+					var n = nodes[currentIndex++];
+					var cell = document.getElementById('latency-cell-' + n.id);
+					if (cell) cell.innerHTML = '<span style="color:#2563eb;">' + _('测速中...') + '</span>';
+
+					return callProbeNode(n.id, timeout).then(function(res) {
+						completed++;
+						if (!self._probeAborted) {
+							probeStatusSpan.innerText = _('测速中 (') + completed + '/' + total + ')...';
+						}
+						if (cell) {
+							if (res && res.latency > 0) {
+								var color = res.latency < 200 ? '#10b981' : (res.latency < 500 ? '#f59e0b' : '#ef4444');
+								cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
+							} else {
+								cell.innerHTML = '<span style="color:#ef4444; font-size:11px;">' + _('超时 / 失败') + '</span>';
+							}
+						}
+						if (!self._probeAborted && currentIndex < total) {
+							return runWorker();
+						}
+					}).catch(function() {
+						completed++;
+						if (cell) cell.innerHTML = '<span style="color:#ef4444; font-size:11px;">' + _('错误') + '</span>';
+						if (!self._probeAborted && currentIndex < total) {
+							return runWorker();
+						}
+					});
+				};
+
+				var workers = [];
+				for (var w = 0; w < concurrency && w < total; w++) {
+					workers.push(runWorker());
+				}
+
+				Promise.all(workers).then(function() {
+					if (!self._probeAborted) {
+						isProbing = false;
+						probeBtn.className = 'cbi-button cbi-button-action';
+						probeBtn.style.cssText = 'margin-left:8px; background-color:#10b981; color:#fff;';
+						probeBtn.innerText = _('⚡ 全部测速');
+						probeStatusSpan.innerText = _('测速完成 (') + completed + '/' + total + ')';
+						ui.addNotification(null, E('p', {}, _('全部节点测速已完成！')), 'success');
+					}
+				});
+			}
+		}, _('⚡ 全部测速'));
+
 		var toolbar = E('div', { 'class': 'cbi-section-actions', 'style': 'margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;' }, [
-			E('div', {}, [
+			E('div', { 'style': 'display:flex; align-items:center; flex-wrap:wrap;' }, [
 				// Add Node Button
 				E('button', {
 					'class': 'cbi-button cbi-button-save',
@@ -792,41 +900,14 @@ return view.extend({
 					}
 				}, '+ ' + _('添加节点信息')),
 
-				// Manual Refresh All Speed Test
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'style': 'margin-left:8px; background-color:#10b981; color:#fff;',
-					'click': function(ev) {
-						ev.target.disabled = true;
-						ev.target.innerText = _('正在并发全链路测速...');
-						ui.addNotification(null, E('p', {}, _('开始并发测试各节点完整代理链延迟...')), 'info');
-						
-						var promises = nodes.map(function(n) {
-							var cell = document.getElementById('latency-cell-' + n.id);
-							if (cell) cell.innerHTML = '<span style="color:#2563eb;">测速中...</span>';
-							return callProbeNode(n.id).then(function(res) {
-								if (!cell) return;
-								if (res && res.latency > 0) {
-									var color = res.latency < 250 ? '#10b981' : (res.latency < 500 ? '#f59e0b' : '#ef4444');
-									cell.innerHTML = '<span style="color:' + color + '; font-weight:bold; font-family:monospace;">' + res.latency + ' ms</span>';
-								} else {
-									cell.innerHTML = '<span style="color:#ef4444; font-size:11px;">超时 / 失败</span>';
-								}
-							});
-						});
-
-						Promise.all(promises).then(function() {
-							ev.target.disabled = false;
-							ev.target.innerText = _('手动刷新全部测速');
-							ui.addNotification(null, E('p', {}, _('全部节点测速完成！')), 'success');
-						});
-					}
-				}, _('手动刷新全部测速'))
+				// Concurrency Queue Speed Test
+				probeBtn,
+				probeStatusSpan
 			]),
 			E('div', { 'style': 'font-size:12px; color:#666;' }, [
-				E('span', { 'style': 'margin-right:12px;' }, '● ' + _('当前节点')),
-				E('span', { 'style': 'color:#10b981; font-weight:bold; margin-right:8px;' }, '<250ms ' + _('极优')),
-				E('span', { 'style': 'color:#f59e0b; font-weight:bold; margin-right:8px;' }, '250~500ms ' + _('良好')),
+				E('span', { 'style': 'margin-right:12px;' }, '● ' + _('当前活动节点')),
+				E('span', { 'style': 'color:#10b981; font-weight:bold; margin-right:8px;' }, '<200ms ' + _('极优')),
+				E('span', { 'style': 'color:#f59e0b; font-weight:bold; margin-right:8px;' }, '200~500ms ' + _('良好')),
 				E('span', { 'style': 'color:#ef4444; font-weight:bold;' }, '>500ms ' + _('较慢'))
 			])
 		]);
@@ -1028,6 +1109,8 @@ return view.extend({
 		var proxyHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.proxy_host) || '127.0.0.1' });
 		var probeUrl = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.probe_url) || 'http://www.gstatic.com/generate_204' });
 		var healthUrl = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': (settingsData && settingsData.health_url) || 'http://www.gstatic.com/generate_204' });
+		var probeTimeout = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_timeout) || 5 });
+		var probeConcurrency = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_concurrency) || 3 });
 
 		var fixedSelect = E('select', { 'class': 'cbi-input-select' });
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
@@ -1044,7 +1127,7 @@ return view.extend({
 		}
 
 		return E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, _('全局运行参数 (/etc/xc/settings.json)')),
+			E('h3', {}, _('全局基础设置 (/etc/xc/settings.json)')),
 			E('div', { 'class': 'cbi-section-node' }, [
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, E('strong', {}, _('SOCKS 代理接口'))),
@@ -1072,7 +1155,45 @@ return view.extend({
 				]),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('测速目标 URL (probe_url)')),
-					E('div', { 'class': 'cbi-value-field' }, probeUrl)
+					E('div', { 'class': 'cbi-value-field' }, [
+						probeUrl,
+						E('div', { 'style': 'margin-top:6px; display:flex; gap:8px; align-items:center;' }, [
+							E('span', { 'style': 'font-size:12px; color:#666;' }, _('常用预设: ')),
+							E('button', {
+								'class': 'cbi-button cbi-button-neutral',
+								'style': 'padding:2px 8px; font-size:11px;',
+								'click': function(ev) {
+									ev.preventDefault();
+									probeUrl.value = 'http://www.gstatic.com/generate_204';
+								}
+							}, 'Google 204'),
+							E('button', {
+								'class': 'cbi-button cbi-button-neutral',
+								'style': 'padding:2px 8px; font-size:11px;',
+								'click': function(ev) {
+									ev.preventDefault();
+									probeUrl.value = 'http://cp.cloudflare.com/generate_204';
+								}
+							}, 'Cloudflare 204')
+						]),
+						E('div', { 'class': 'cbi-value-description' }, _('节点 RTT 延迟测试目标地址，需返回 HTTP 204 或 200 状态码。'))
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('测速参数控制')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('div', { 'style': 'display:flex; gap:16px; align-items:center; flex-wrap:wrap;' }, [
+							E('div', {}, [
+								E('span', { 'style': 'font-size:12px; color:#666;' }, _('超时时间(秒): ')),
+								probeTimeout
+							]),
+							E('div', {}, [
+								E('span', { 'style': 'font-size:12px; color:#666;' }, _('并发通道数: ')),
+								probeConcurrency
+							])
+						]),
+						E('div', { 'class': 'cbi-value-description' }, _('超时建议 3~5 秒，避免失效节点过久等待；并发建议 2~4，控制路由器瞬时 CPU 与内存压力。'))
+					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('出口测试 URL (health_url)')),
@@ -1099,7 +1220,9 @@ return view.extend({
 									http_port: Number(httpPort.value.trim()),
 									proxy_host: proxyHost.value.trim(),
 									probe_url: probeUrl.value.trim(),
-									health_url: healthUrl.value.trim()
+									health_url: healthUrl.value.trim(),
+									probe_timeout: Number(probeTimeout.value.trim()) || 5,
+									probe_concurrency: Number(probeConcurrency.value.trim()) || 3
 								};
 								callSaveSettings(newSettings, Number(fixedSelect.value)).then(function(res) {
 									ev.target.disabled = false;
@@ -1122,14 +1245,60 @@ return view.extend({
 		var nodesData = data[1] || { version: 1, fixed_proxy_id: 1, nodes: [] };
 		var settingsData = data[2] || {};
 
+		var activeTab = 'nodes';
+		try {
+			activeTab = window.sessionStorage.getItem('xc_active_tab') || 'nodes';
+		} catch(e) {}
+
+		var nodePane = this.renderNodeTable(status, nodesData, settingsData);
+		var settingsPane = this.renderSettingsSection(nodesData, settingsData);
+		var corePane = this.renderCoreAssetsSection(status);
+
+		var tabs = [
+			{ id: 'nodes', name: '📋 ' + _('节点管理与测速'), pane: nodePane },
+			{ id: 'settings', name: '⚙️ ' + _('全局基础设置'), pane: settingsPane },
+			{ id: 'core', name: '📦 ' + _('核心组件与规则'), pane: corePane }
+		];
+
+		var tabUl = E('ul', { 'class': 'cbi-tabmenu', 'style': 'margin-top:16px; margin-bottom:18px;' });
+
+		var switchTab = function(tabId) {
+			activeTab = tabId;
+			try {
+				window.sessionStorage.setItem('xc_active_tab', tabId);
+			} catch(e) {}
+
+			tabs.forEach(function(t) {
+				var isCur = (t.id === tabId);
+				t.pane.style.display = isCur ? 'block' : 'none';
+				if (t.li) {
+					t.li.className = isCur ? 'cbi-tab' : 'cbi-tab-disabled';
+				}
+			});
+		};
+
+		tabs.forEach(function(t) {
+			var a = E('a', {
+				'href': '#',
+				'click': function(ev) {
+					ev.preventDefault();
+					switchTab(t.id);
+				}
+			}, t.name);
+			t.li = E('li', { 'class': (t.id === activeTab) ? 'cbi-tab' : 'cbi-tab-disabled' }, [ a ]);
+			tabUl.appendChild(t.li);
+			t.pane.style.display = (t.id === activeTab) ? 'block' : 'none';
+		});
+
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('xc 节点切换与分流管理器')),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),
 			this.renderStatusHeader(status, nodesData),
-			this.renderCoreAssetsSection(status),
-			this.renderNodeTable(status, nodesData, settingsData),
-			this.renderSettingsSection(nodesData, settingsData)
+			tabUl,
+			nodePane,
+			settingsPane,
+			corePane
 		]);
 
 		return m;

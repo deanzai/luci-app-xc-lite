@@ -25,10 +25,18 @@ chmod 0755 "$BUILD_DIR/data/usr/libexec/rpcd/luci.xc"
 chmod 0755 "$BUILD_DIR/data/etc/init.d/xc-xray"
 chmod 0755 "$BUILD_DIR/data/etc/uci-defaults/80_luci-app-xc"
 
+# 获取版本号
+PKG_VER=$(grep -E '^PKG_VERSION:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
+PKG_REL=$(grep -E '^PKG_RELEASE:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
+[ -n "$PKG_VER" ] || PKG_VER="1.0.14"
+[ -n "$PKG_REL" ] || PKG_REL="1"
+FULL_VER="${PKG_VER}-${PKG_REL}"
+APK_VER="${PKG_VER}-r${PKG_REL}"
+
 # 生成 control 文件
-cat > "$BUILD_DIR/control/control" << 'EOF'
+cat > "$BUILD_DIR/control/control" << EOF
 Package: luci-app-xc
-Version: 1.0.8-1
+Version: ${FULL_VER}
 Depends: luci-base, rpcd, rpcd-mod-file
 Section: luci
 Architecture: all
@@ -77,7 +85,7 @@ echo "2.0" > "$BUILD_DIR/debian-binary"
 
 echo "=== 3. 生成 OpenWrt IPK 安装包 ==="
 cd "$BUILD_DIR"
-IPK_FILE="$PROJECT_DIR/luci-app-xc_1.0.8-1_all.ipk"
+IPK_FILE="$PROJECT_DIR/luci-app-xc_${FULL_VER}_all.ipk"
 tar -czf "$IPK_FILE" debian-binary control.tar.gz data.tar.gz
 ls -lh "$IPK_FILE"
 
@@ -86,9 +94,9 @@ APK_DIR="/tmp/luci-app-xc-apk"
 rm -rf "$APK_DIR"
 mkdir -p "$APK_DIR"
 cp -r "$BUILD_DIR/data/"* "$APK_DIR/"
-cat > "$APK_DIR/.PKGINFO" << 'EOF'
+cat > "$APK_DIR/.PKGINFO" << EOF
 pkgname = luci-app-xc
-pkgver = 1.0.8-r1
+pkgver = ${APK_VER}
 pkgdesc = LuCI Web interface for xc (Xray node switcher and router)
 url = https://github.com/deanzai/luci-app-xc-lite
 builddate = 1725796800
@@ -100,7 +108,7 @@ commit = 102ea11
 EOF
 
 cd "$APK_DIR"
-APK_FILE="$PROJECT_DIR/luci-app-xc-1.0.8-r1.apk"
+APK_FILE="$PROJECT_DIR/luci-app-xc-${APK_VER}.apk"
 tar --owner=0 --group=0 -czf "$APK_FILE" .PKGINFO *
 ls -lh "$APK_FILE"
 

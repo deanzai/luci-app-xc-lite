@@ -134,6 +134,37 @@ xc rollback      # 恢复上一份配置
 
 ---
 
+## 质量自测套件与先验后发门禁 (Quality Gate & Testing)
+
+本项目建立了严密的分层自测与发布门禁工作流，严格禁止未经测试的代码直接发布上线：
+
+```text
+[代码修改] ──► [本地规范与沙箱自测 (verify.sh --local)] ──► [自动构建编译 (build.sh)]
+                  │ (全部 PASS)                               │
+                  ▼                                           ▼
+[同步生产路由器 (93.94, 13.1)] ◄── (全部 PASS) ── [Staging 验证机真机回归 (verify.sh --staging)]
+```
+
+### 1. 运行本地自动化自测 (Local Tests)
+在开发过程中随时执行本地快速检查（包含 CRLF 换行校验、Lua 语法编译、依赖项静态检查、模态框防遮挡规则、RPCD 沙箱模拟）：
+```sh
+./scripts/verify.sh --local
+```
+
+### 2. 运行 Staging 预发布机真机回归测试 (Staging Live Tests)
+对预发布测试路由器（`192.168.6.1`）执行真实网络探活与组件回归测试：
+```sh
+./scripts/verify.sh --staging
+```
+
+### 3. 一键流水线发布 (Release Pipeline)
+通过受控脚本完成「本地检查 -> 构建打包 -> Staging 预演验收 -> 生产同步」全流程：
+```sh
+./scripts/release.sh
+```
+
+---
+
 ## 许可证
 
 [MIT License](LICENSE)

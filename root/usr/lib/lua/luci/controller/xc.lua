@@ -1,6 +1,12 @@
 module("luci.controller.xc", package.seeall)
 
+local http = require "luci.http"
+local util = require "luci.util"
+luci.http = http
+luci.util = util
+
 function index()
+    local nixio = require "nixio"
     if not nixio.fs.access("/etc/config/xc") then
         return
     end
@@ -26,7 +32,7 @@ local function call_rpcd(method, input_json)
     if input_json and #input_json > 0 then
         cmd = "echo " .. luci.util.shellquote(input_json) .. " | /usr/libexec/rpcd/luci.xc call " .. method .. " 2>/dev/null"
     else
-        cmd = "/usr/libexec/rpcd/luci.xc call " .. method .. " 2>/dev/null"
+        cmd = "echo '' | /usr/libexec/rpcd/luci.xc call " .. method .. " 2>/dev/null"
     end
     local p = io.popen(cmd)
     local res = p and p:read("*a") or "{}"
@@ -40,7 +46,7 @@ local function silent_rpcd(method, input_json)
     if input_json and #input_json > 0 then
         cmd = "echo " .. luci.util.shellquote(input_json) .. " | /usr/libexec/rpcd/luci.xc call " .. method .. " >/dev/null 2>&1"
     else
-        cmd = "/usr/libexec/rpcd/luci.xc call " .. method .. " >/dev/null 2>&1"
+        cmd = "echo '' | /usr/libexec/rpcd/luci.xc call " .. method .. " >/dev/null 2>&1"
     end
     os.execute(cmd)
 end
@@ -60,7 +66,12 @@ end
 
 function act_probe_node()
     local id = luci.http.formvalue("id")
-    call_rpcd("probe_node", string.format('{"id":%d}', tonumber(id) or 0))
+    local timeout = luci.http.formvalue("timeout")
+    if timeout then
+        call_rpcd("probe_node", string.format('{"id":%d,"timeout":%d}', tonumber(id) or 0, tonumber(timeout) or 5))
+    else
+        call_rpcd("probe_node", string.format('{"id":%d}', tonumber(id) or 0))
+    end
 end
 
 function act_save_node()

@@ -71,7 +71,12 @@ local methods = {
             output_json({ code = 1, latency = -1 })
             return
         end
-        local p = io.popen("/usr/bin/xc probe " .. tostring(id) .. " 2>/dev/null")
+        local timeout = tonumber(params.timeout)
+        local cmd = "/usr/bin/xc probe " .. tostring(id)
+        if timeout then
+            cmd = cmd .. " " .. tostring(timeout)
+        end
+        local p = io.popen(cmd .. " 2>/dev/null")
         local res = p and p:read("*a") or "{}"
         if p then p:close() end
         local ok, data = pcall(json.parse, res)
@@ -199,6 +204,8 @@ local methods = {
             proxy_host = "127.0.0.1",
             probe_url = "http://www.gstatic.com/generate_204",
             health_url = "http://www.gstatic.com/generate_204",
+            probe_timeout = 5,
+            probe_concurrency = 3,
             core_source = "custom",
             asset_source = "custom"
         }
@@ -261,7 +268,10 @@ elseif action == "call" then
     local method = arg[2]
     local fn = methods[method]
     if fn then
-        local params = parse_stdin()
+        local params = {}
+        if method == "switch_node" or method == "probe_node" or method == "save_node" or method == "delete_node" or method == "switch_source" or method == "save_settings" then
+            params = parse_stdin()
+        end
         fn(params)
     else
         output_json({ code = 2, message = "unknown method" })
