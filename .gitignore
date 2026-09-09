@@ -15,6 +15,10 @@ id_*
 router-*.json
 deploy-local.*
 github_token.txt
+login_message*.txt
+*.code-workspace
+.tools/
+tests/tmp/
 
 # Python cache
 __pycache__/

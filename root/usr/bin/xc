@@ -2,6 +2,10 @@
 local json = require "luci.jsonc"
 
 local ROOT = "/etc/xc"
+local BIN_DIR = ROOT .. "/bin"
+local ASSET_DIR = ROOT .. "/assets"
+local CUSTOM_XRAY = BIN_DIR .. "/xray"
+local SYSTEM_XRAY = "/usr/bin/xray"
 local NODES_FILE = ROOT .. "/nodes.json"
 local CONFIG_FILE = ROOT .. "/config.json"
 local CURRENT_FILE = ROOT .. "/current"
@@ -16,8 +20,182 @@ local DEFAULT_SETTINGS = {
     http_port = 10809,
     proxy_host = "127.0.0.1",
     probe_url = "http://www.gstatic.com/generate_204",
-    health_url = "http://www.gstatic.com/generate_204"
+    health_url = "http://www.gstatic.com/generate_204",
+    core_source = "custom",
+    asset_source = "custom"
 }
+
+local function file_exists(path)
+    local f = io.open(path, "r")
+    if not f then return false end
+    f:close()
+    return true
+end
+
+local function shell_quote(value)
+    return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
+end
+
+local function is_executable(path)
+    return os.execute("test -x " .. shell_quote(path)) == 0
+end
+
+local function find_system_asset_dir()
+    for _, dir in ipairs({"/usr/share/xray", "/usr/share/v2ray"}) do
+        if file_exists(dir .. "/geosite.dat") and file_exists(dir .. "/geoip.dat") then
+            return dir
+        end
+    end
+    return nil
+end
+
+local function resolve_xray(cfg_source)
+    local custom_ok = file_exists(CUSTOM_XRAY) and is_executable(CUSTOM_XRAY)
+    local system_ok = file_exists(SYSTEM_XRAY) and is_executable(SYSTEM_XRAY)
+
+    if cfg_source == "builtin" then
+        if system_ok then
+            return SYSTEM_XRAY, "builtin"
+        end
+        return nil, "none"
+    else
+        -- custom mode: 优先使用自定义上传核心，若不存在则自动回退保底至内置系统核心
+        if custom_ok then
+            return CUSTOM_XRAY, "custom"
+        elseif system_ok then
+            return SYSTEM_XRAY, "builtin_fallback"
+        end
+        return nil, "none"
+    end
+end
+
+local function resolve_asset_dir(cfg_source)
+    local custom_ok = file_exists(ASSET_DIR .. "/geosite.dat") and file_exists(ASSET_DIR .. "/geoip.dat")
+    local sys_dir = find_system_asset_dir()
+
+    if cfg_source == "builtin" then
+        if sys_dir then
+            return sys_dir, "builtin"
+        end
+        return nil, "none"
+    else
+        -- custom mode: 优先使用自定义上传规则库，若不存在则自动回退保底至内置系统规则库
+        if custom_ok then
+            return ASSET_DIR, "custom"
+        elseif sys_dir then
+            return sys_dir, "builtin_fallback"
+        end
+        return nil, "none"
+    end
+end
+
+local function read(path)
+    local f = io.open(path, "r")
+    if not f then return nil end
+    local data = f:read("*a")
+    f:close()
+    return data
+end
+
+local function write(path, data)
+    local f = assert(io.open(path, "w"))
+    f:write(data)
+    f:close()
+end
+
+local function setting(name)
+    local raw = read(SETTINGS_FILE)
+    if not raw then return DEFAULT_SETTINGS[name] end
+    local ok, data = pcall(json.parse, raw)
+    if ok and type(data) == "table" and data[name] ~= nil then return data[name] end
+    return DEFAULT_SETTINGS[name]
+end
+
+local function check_core_status()
+    local core_src = tostring(setting("core_source") or "custom")
+    local asset_src = tostring(setting("asset_source") or "custom")
+
+    local xray_bin, active_core_type = resolve_xray(core_src)
+    local asset_dir, active_asset_type = resolve_asset_dir(asset_src)
+
+    local custom_xray_avail = file_exists(CUSTOM_XRAY) and is_executable(CUSTOM_XRAY)
+    local builtin_xray_avail = file_exists(SYSTEM_XRAY) and is_executable(SYSTEM_XRAY)
+    local custom_asset_avail = file_exists(ASSET_DIR .. "/geosite.dat") and file_exists(ASSET_DIR .. "/geoip.dat")
+    local builtin_asset_avail = (find_system_asset_dir() ~= nil)
+
+    local geosite_path = nil
+    local geoip_path = nil
+    if asset_dir then
+        geosite_path = asset_dir .. "/geosite.dat"
+        geoip_path = asset_dir .. "/geoip.dat"
+    end
+
+    local missing = {}
+    if not xray_bin then table.insert(missing, "xray") end
+    if not asset_dir or not file_exists(asset_dir .. "/geosite.dat") then table.insert(missing, "geosite") end
+    if not asset_dir or not file_exists(asset_dir .. "/geoip.dat") then table.insert(missing, "geoip") end
+
+    return {
+        core_source = core_src,
+        asset_source = asset_src,
+        active_core_source = active_core_type,
+        active_asset_source = active_asset_type,
+        custom_core_available = custom_xray_avail,
+        builtin_core_available = builtin_xray_avail,
+        custom_asset_available = custom_asset_avail,
+        builtin_asset_available = builtin_asset_avail,
+
+        xray_ok = (xray_bin ~= nil),
+        xray_path = xray_bin,
+        asset_dir = asset_dir,
+        geosite_ok = (geosite_path ~= nil and file_exists(geosite_path)),
+        geosite_path = geosite_path,
+        geoip_ok = (geoip_path ~= nil and file_exists(geoip_path)),
+        geoip_path = geoip_path,
+        ready = (xray_bin ~= nil and asset_dir ~= nil and #missing == 0),
+        missing = missing
+    }
+end
+
+local function log_error(msg)
+    os.execute("logger -t xc -p daemon.err " .. shell_quote(msg))
+end
+
+local function ensure_core_files()
+    local st = check_core_status()
+    if not st.ready then
+        local msgs = {}
+        if not st.xray_ok then
+            local m = "Core file missing: xray executable not found (mode: " .. tostring(st.core_source) .. ")"
+            table.insert(msgs, m)
+            log_error(m)
+        end
+        if not st.geosite_ok then
+            local m = "Asset file missing: geosite.dat not found (mode: " .. tostring(st.asset_source) .. ")"
+            table.insert(msgs, m)
+            log_error(m)
+        end
+        if not st.geoip_ok then
+            local m = "Asset file missing: geoip.dat not found (mode: " .. tostring(st.asset_source) .. ")"
+            table.insert(msgs, m)
+            log_error(m)
+        end
+        local combined = table.concat(msgs, "; ")
+        io.stderr:write("xc error: " .. combined .. "\n")
+        return false, combined, st
+    end
+    return true, nil, st
+end
+
+local function xray_command(args, st)
+    st = st or check_core_status()
+    local bin = st.xray_path or SYSTEM_XRAY
+    local prefix = ""
+    if st.asset_dir and #st.asset_dir > 0 then
+        prefix = "XRAY_LOCATION_ASSET=" .. shell_quote(st.asset_dir) .. " "
+    end
+    return prefix .. shell_quote(bin) .. " " .. args
+end
 
 local function read(path)
     local f = io.open(path, "r")
@@ -39,10 +217,6 @@ local function setting(name)
     local ok, data = pcall(json.parse, raw)
     if ok and data and data[name] ~= nil then return data[name] end
     return DEFAULT_SETTINGS[name]
-end
-
-local function shell_quote(value)
-    return "'" .. tostring(value):gsub("'", "'\\''") .. "'"
 end
 
 local function run(command)
@@ -221,6 +395,10 @@ local function output_node(node, latency)
 end
 
 local function probe(node, port)
+    local ready, err_msg, st = ensure_core_files()
+    if not ready then
+        return nil
+    end
     port = port or (18080 + tonumber(node.id))
     local config = "/tmp/xc-probe-" .. tostring(node.id) .. ".json"
     local log = "/tmp/xc-probe-" .. tostring(node.id) .. ".log"
@@ -229,11 +407,11 @@ local function probe(node, port)
     local probe_config = make_config_for(data, node, port, port + 1)
     table.insert(probe_config.routing.rules, 1, {type = "field", domain = {"full:www.gstatic.com"}, outboundTag = "proxy-selected"})
     write(config, json.stringify(probe_config, 1))
-    if not run("/usr/bin/xray run -test -c " .. shell_quote(config) .. " >/dev/null 2>&1") then
+    if not run(xray_command("run -test -c " .. shell_quote(config) .. " >/dev/null 2>&1", st)) then
         os.remove(config)
         return nil
     end
-    local p = io.popen("sh -c " .. shell_quote("/usr/bin/xray run -c " .. config .. " >" .. log .. " 2>&1 & echo $!"))
+    local p = io.popen("sh -c " .. shell_quote(xray_command("run -c " .. config .. " >" .. log .. " 2>&1 & echo $!", st)))
     local pid = p and p:read("*l")
     if p then p:close() end
     if not pid then os.remove(config); return nil end
@@ -262,15 +440,29 @@ local function list_nodes(data)
 end
 
 local function select_node(id)
+    local ready, err_msg, st = ensure_core_files()
+    if not ready then
+        return false, err_msg
+    end
     local data = nodes_data()
     local node = find_node(data, id)
     if not node then
         io.stderr:write("unknown node: " .. tostring(id) .. "\n")
         return false, "unknown node: " .. tostring(id)
     end
+
+    -- 联动检查：若当前仅有唯一节点，或固定分流节点未配置/失效，自动将固定分流节点同步为当前节点
+    local nodes_count = (data.nodes and #data.nodes) or 0
+    local fixed_node = data.fixed_proxy_id and find_node(data, data.fixed_proxy_id)
+    local need_update_fixed = (nodes_count <= 1) or (not fixed_node)
+    if need_update_fixed then
+        data.fixed_proxy_id = tonumber(id)
+        write(NODES_FILE, json.stringify(data, 1))
+    end
+
     local config = ROOT .. "/config.new.json"
     write(config, json.stringify(make_config_for(data, node), 1))
-    if not run("/usr/bin/xray run -test -c " .. shell_quote(config) .. " >/tmp/xc-test.log 2>&1") then
+    if not run(xray_command("run -test -c " .. shell_quote(config) .. " >/tmp/xc-test.log 2>&1", st)) then
         local err = read("/tmp/xc-test.log") or "xray configuration test failed"
         io.stderr:write(err)
         return false, err
@@ -319,14 +511,15 @@ local function test_current()
     return socks, http
 end
 
-local function rollback_state()
-    if run("test -s " .. shell_quote(PREV_CONFIG) .. " && test -s " .. shell_quote(PREV_CURRENT)) then
-        os.execute("cp -f " .. shell_quote(PREV_CONFIG) .. " " .. shell_quote(CONFIG_FILE))
-        os.execute("cp -f " .. shell_quote(PREV_CURRENT) .. " " .. shell_quote(CURRENT_FILE))
-        run("/etc/init.d/xc-xray restart >/dev/null 2>&1")
-        return true
-    end
-    return false
+local function set_source(c_src, a_src)
+    local raw = read(SETTINGS_FILE)
+    local ok, data = pcall(json.parse, raw or "")
+    if not ok or type(data) ~= "table" then data = {} end
+    if c_src then data.core_source = c_src end
+    if a_src then data.asset_source = a_src end
+    write(SETTINGS_FILE, json.stringify(data, 1))
+    io.write("updated sources: core_source=" .. tostring(data.core_source) .. " asset_source=" .. tostring(data.asset_source) .. "\n")
+    return true
 end
 
 -- CLI Entry Point
@@ -340,7 +533,7 @@ elseif command == "current" then
     local node = id and find_node(data, id)
     if node then io.write(string.format("%d [%s] %s\n", id, node.type, node.name)) else io.write("none\n") end
 elseif command == "status" then
-    local p = io.popen("pgrep -f '/usr/bin/xray run -c /etc/xc/config.json'")
+    local p = io.popen("pgrep -f 'xray run -c /etc/xc/config.json'")
     local pid = p and p:read("*l")
     if p then p:close() end
     local cur_id = current_id()
@@ -360,7 +553,8 @@ elseif command == "status" then
         http_host = h_host,
         http_port = h_port,
         socks_listening = check_port_listening(s_port),
-        http_listening = check_port_listening(h_port)
+        http_listening = check_port_listening(h_port),
+        core_status = check_core_status()
     }
     io.write(json.stringify(status, 1) .. "\n")
 elseif command == "probe" then
@@ -383,18 +577,39 @@ elseif command == "switch" then
     local ok, err = select_node(id)
     os.exit(ok and 0 or 1)
 elseif command == "test" then
+    local ready, err = ensure_core_files()
+    if not ready then
+        os.exit(1)
+    end
     local s, h = test_current()
     os.exit((s and h) and 0 or 1)
-elseif command == "rollback" then
-    if rollback_state() then
-        io.write("rollback success\n")
-    else
-        io.stderr:write("no rollback state\n"); os.exit(1)
+elseif command == "set-source" then
+    local c_src = arg[2]
+    local a_src = arg[3]
+    if not c_src and not a_src then
+        io.stderr:write("usage: xc set-source <custom|builtin> [custom|builtin]\n"); os.exit(2)
     end
+    set_source(c_src, a_src)
+    os.exit(0)
+elseif command == "restart" or command == "start" then
+    local cur = current_id()
+    if cur and find_node(data, cur) then
+        local ok, err = select_node(cur)
+        os.exit(ok and 0 or 1)
+    elseif file_exists(CONFIG_FILE) then
+        local ret = os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+        os.exit(ret == 0 and 0 or 1)
+    else
+        io.stderr:write("no active node or configuration to start\n")
+        os.exit(1)
+    end
+elseif command == "stop" then
+    local ret = os.execute("/etc/init.d/xc-xray stop >/dev/null 2>&1")
+    os.exit(ret == 0 and 0 or 1)
 elseif tonumber(command) then
     local ok = select_node(tonumber(command))
     os.exit(ok and 0 or 1)
 else
-    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc current | xc probe <id> | xc status | xc test | xc rollback\n")
+    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc test | xc set-source <core> [asset]\n")
     os.exit(2)
 end

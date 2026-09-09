@@ -23,6 +23,15 @@
         <%=translate("轻量级 Xray 节点切换与双协议分流管理面板，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、手动平滑切换与失败回滚。")%>
     </div>
 
+    <!-- 核心组件丢失告警条 -->
+    <div id="xc-core-missing-alert" class="alert-message danger" style="display:none; margin-bottom:15px; border-left:4px solid #ef4444; background:#fef2f2; padding:12px 15px; border-radius:4px; color:#991b1b;">
+        <h4 style="margin:0 0 6px 0; color:#b91c1c; display:flex; align-items:center;">
+            <span style="font-size:18px; margin-right:8px;">⚠️</span>
+            <%=translate("核心运行文件或路由规则缺失，服务无法正常启动！")%>
+        </h4>
+        <p id="xc-core-missing-text" style="margin:0; font-size:13px;"></p>
+    </div>
+
     <!-- 运行状态看板 -->
     <fieldset class="cbi-section">
         <legend><%=translate("运行状态与分流概览")%></legend>
@@ -31,8 +40,15 @@
                 <label class="cbi-value-title"><%=translate("服务运行状态")%></label>
                 <div class="cbi-value-field">
                     <span id="stat-running-badge" class="xc-badge xc-badge-warning"><%=translate("检测中...")%></span>
-                    <button class="cbi-button cbi-button-action" style="margin-left:12px;" onclick="doTestHealth()"><%=translate("测试双端口出口")%></button>
-                    <button class="cbi-button cbi-button-reset" style="margin-left:6px;" onclick="doRollback()"><%=translate("回滚上一节点")%></button>
+                    <span id="service-control-slot"></span>
+                    <button class="cbi-button cbi-button-action" style="margin-left:4px;" onclick="doTestHealth()"><%=translate("测试双端口出口")%></button>
+                </div>
+            </div>
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("核心与规则组件")%></label>
+                <div class="cbi-value-field">
+                    <span id="stat-core-text"><%=translate("检测中...")%></span>
+                    <span id="stat-core-badge" class="xc-badge xc-badge-warning" style="margin-left:8px;"><%=translate("检测中")%></span>
                 </div>
             </div>
             <div class="cbi-value">
@@ -55,6 +71,62 @@
                     SOCKS5h: 7890 | HTTP Proxy: 10809 | DoH: 1.1.1.1 (dns-proxy)
                 </div>
             </div>
+        </div>
+    </fieldset>
+
+    <!-- 核心组件与规则文件管理 -->
+    <fieldset class="cbi-section">
+        <legend><%=translate("核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)")%></legend>
+        <div class="cbi-section-descr" style="margin-bottom:10px; font-size:12px; color:#666;">
+            <%=translate("支持网页直接上传 Xray 核心（支持 Linux ELF 或 tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。")%>
+        </div>
+        <div class="cbi-section-node">
+            <table class="table cbi-section-table" id="xc-assets-table">
+                <tr class="tr table-titles">
+                    <th class="th" style="width:130px; text-align:center;"><%=translate("状态 / 模式")%></th>
+                    <th class="th" style="width:230px;"><%=translate("组件名称")%></th>
+                    <th class="th"><%=translate("当前生效路径 / 说明")%></th>
+                    <th class="th cbi-section-actions" style="width:260px; text-align:right;"><%=translate("操作")%></th>
+                </tr>
+                <tbody id="assets-tbody">
+                    <tr class="tr">
+                        <td class="td" style="text-align:center;"><span id="asset-xray-badge" class="xc-badge xc-badge-warning"><%=translate("检测中")%></span></td>
+                        <td class="td"><strong><%=translate("Xray 核心程序 (xray)")%></strong></td>
+                        <td class="td">
+                            <div id="asset-xray-path" style="font-family:monospace; font-size:12px; color:#666;">-</div>
+                            <div style="font-size:11px; color:#888;"><%=translate("支持上传 Linux ELF 程序或 .tar.gz 压缩包（自动解压并校验）")%></div>
+                        </td>
+                        <td class="td cbi-section-actions" style="text-align:right;">
+                            <span id="asset-xray-switch-slot"></span>
+                            <button class="cbi-button cbi-button-action" style="margin-left:4px;" onclick="doUploadAsset('xray', '<%=translate("Xray 核心")%>')"><%=translate("上传 Xray 核心")%></button>
+                        </td>
+                    </tr>
+                    <tr class="tr">
+                        <td class="td" style="text-align:center;"><span id="asset-geosite-badge" class="xc-badge xc-badge-warning"><%=translate("检测中")%></span></td>
+                        <td class="td"><strong><%=translate("GeoSite 域名规则库 (geosite.dat)")%></strong></td>
+                        <td class="td">
+                            <div id="asset-geosite-path" style="font-family:monospace; font-size:12px; color:#666;">-</div>
+                            <div style="font-size:11px; color:#888;"><%=translate("负责特定服务代理分流与直连，支持手动切换自定义/内置规则库")%></div>
+                        </td>
+                        <td class="td cbi-section-actions" style="text-align:right;">
+                            <span id="asset-geosite-switch-slot"></span>
+                            <button class="cbi-button cbi-button-action" style="margin-left:4px;" onclick="doUploadAsset('geosite', 'geosite.dat')"><%=translate("上传 geosite.dat")%></button>
+                        </td>
+                    </tr>
+                    <tr class="tr">
+                        <td class="td" style="text-align:center;"><span id="asset-geoip-badge" class="xc-badge xc-badge-warning"><%=translate("检测中")%></span></td>
+                        <td class="td"><strong><%=translate("GeoIP IP规则库 (geoip.dat)")%></strong></td>
+                        <td class="td">
+                            <div id="asset-geoip-path" style="font-family:monospace; font-size:12px; color:#666;">-</div>
+                            <div style="font-size:11px; color:#888;"><%=translate("负责中国大陆 IP 直连与私网绕行，支持手动切换自定义/内置规则库")%></div>
+                        </td>
+                        <td class="td cbi-section-actions" style="text-align:right;">
+                            <span id="asset-geoip-switch-slot"></span>
+                            <button class="cbi-button cbi-button-action" style="margin-left:4px;" onclick="doUploadAsset('geoip', 'geoip.dat')"><%=translate("上传 geoip.dat")%></button>
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
         </div>
     </fieldset>
 
@@ -255,6 +327,46 @@
     </div>
 </div>
 
+<!-- 文件上传进度条模态对话框 (Upload Progress Modal) -->
+<div id="xc-upload-modal-mask" class="xc-modal-mask xc-hidden">
+    <div class="xc-modal" style="max-width:520px; padding:22px; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #eee; padding-bottom:10px;">
+            <h3 style="margin:0; font-size:16px; font-weight:600; display:flex; align-items:center; color:#1f2937;">
+                <span id="xc-upload-icon" style="margin-right:8px; font-size:20px;">📤</span>
+                <span id="xc-upload-title-text"><%=translate("上传文件")%></span>
+            </h3>
+            <span id="xc-upload-modal-close" style="cursor:pointer; font-size:22px; color:#9ca3af; line-height:1; display:none;" onclick="closeUploadModal()">&times;</span>
+        </div>
+
+        <div style="margin-bottom:12px; font-size:13px; color:#4b5563;">
+            <div style="display:flex; justify-content:space-between; margin-bottom:6px; align-items:baseline;">
+                <span id="xc-upload-filename" style="font-weight:600; color:#111827; word-break:break-all; font-family:monospace;">-</span>
+                <span id="xc-upload-filesize" style="color:#6b7280; font-family:monospace; margin-left:12px; white-space:nowrap;">-</span>
+            </div>
+        </div>
+
+        <!-- 进度条轨道 -->
+        <div style="width:100%; height:18px; background-color:#e5e7eb; border-radius:9px; overflow:hidden; position:relative; margin-bottom:10px; box-shadow:inset 0 1px 2px rgba(0,0,0,0.1);">
+            <div id="xc-upload-progressbar" style="width:0%; height:100%; background:linear-gradient(90deg, #3b82f6, #2563eb); border-radius:9px; transition:width 0.12s ease-out;"></div>
+        </div>
+
+        <!-- 进度百分比与上传状态 -->
+        <div style="display:flex; justify-content:space-between; align-items:center; font-size:12px; margin-bottom:14px;">
+            <span id="xc-upload-status-text" style="color:#4b5563;"><%=translate("准备上传...")%></span>
+            <span id="xc-upload-stats" style="font-family:monospace; font-weight:bold; color:#2563eb;">0% (0 / 0 MB)</span>
+        </div>
+
+        <!-- 结果反馈信息框 -->
+        <div id="xc-upload-msg-box" style="display:none; padding:10px 14px; border-radius:6px; font-size:13px; line-height:1.5; margin-bottom:16px;"></div>
+
+        <!-- 模态框按钮 -->
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:10px;">
+            <button id="xc-upload-btn-cancel" class="cbi-button cbi-button-reset" style="min-width:80px;" onclick="cancelUpload()"><%=translate("取消上传")%></button>
+            <button id="xc-upload-btn-close" class="cbi-button cbi-button-action xc-hidden" style="min-width:80px;" onclick="closeUploadModal()"><%=translate("关闭")%></button>
+        </div>
+    </div>
+</div>
+
 <script type="text/javascript">
 var appData = {
     status: {},
@@ -302,6 +414,147 @@ function renderStatus() {
         badge.innerText = "<%=translate('● 服务未运行')%>";
     }
 
+    var ctrlSlot = document.getElementById("service-control-slot");
+    if (ctrlSlot) {
+        if (st.running) {
+            ctrlSlot.innerHTML = '<button class="cbi-button" style="margin-left:8px;" onclick="doRestartService()"><%=translate("⟳ 重启服务")%></button>'
+                + '<button class="cbi-button cbi-button-reset" style="margin-left:4px;" onclick="doStopService()"><%=translate("⏹ 停止")%></button>';
+        } else {
+            ctrlSlot.innerHTML = '<button class="cbi-button cbi-button-save" style="margin-left:8px; font-weight:bold;" onclick="doRestartService()"><%=translate("▶ 启动服务")%></button>';
+        }
+    }
+
+    var cs = st.core_status || { xray_ok: false, geosite_ok: false, geoip_ok: false };
+    var coreBadge = document.getElementById("stat-core-badge");
+    var coreText = document.getElementById("stat-core-text");
+    if (cs.ready) {
+        coreBadge.className = "xc-badge xc-badge-success";
+        coreBadge.innerText = "<%=translate('组件正常')%>";
+        coreText.innerText = "<%=translate('已就绪')%> (" + (cs.xray_path || "") + ")";
+    } else {
+        coreBadge.className = "xc-badge xc-badge-danger";
+        coreBadge.innerText = "<%=translate('文件丢失')%>";
+        coreText.innerText = "<%=translate('异常：有必要组件缺失')%>";
+    }
+
+    var alertBox = document.getElementById("xc-core-missing-alert");
+    var alertText = document.getElementById("xc-core-missing-text");
+    if (!cs.ready) {
+        var missingList = [];
+        if (!cs.xray_ok) missingList.push("<%=translate('Xray 核心程序 (xray)')%>");
+        if (!cs.geosite_ok) missingList.push("<%=translate('GeoSite 域名规则库 (geosite.dat)')%>");
+        if (!cs.geoip_ok) missingList.push("<%=translate('GeoIP IP规则库 (geoip.dat)')%>");
+        alertText.innerHTML = "<%=translate('检测到以下必要组件缺失：')%><strong style='color:#dc2626; margin:0 4px;'>" + missingList.join("、") + "</strong><%=translate('。请在下方「核心组件与规则文件管理」区域上传对应的文件。若已上传，请确认路径或执行权限。错误已记录至系统日志 (logread)。')%>";
+        alertBox.style.display = "block";
+    } else {
+        alertBox.style.display = "none";
+    }
+
+    // 更新核心与资产表格行及切换控制
+    var xrayBadge = document.getElementById("asset-xray-badge");
+    var xrayPath = document.getElementById("asset-xray-path");
+    var xraySlot = document.getElementById("asset-xray-switch-slot");
+    if (cs.active_core_source === "custom") {
+        xrayBadge.className = "xc-badge xc-badge-success";
+        xrayBadge.innerText = "<%=translate('● 已选用 (自定义核心)')%>";
+        xrayPath.style.color = "#2563eb";
+        xrayPath.innerText = cs.xray_path || "/etc/xc/bin/xray";
+        xraySlot.innerHTML = cs.builtin_core_available 
+            ? '<button class="cbi-button" onclick="doSwitchSource(\'builtin\', null)"><%=translate("切为系统内置")%></button>'
+            : '';
+    } else if (cs.active_core_source === "builtin") {
+        xrayBadge.className = "xc-badge";
+        xrayBadge.style.backgroundColor = "#2563eb";
+        xrayBadge.style.color = "#fff";
+        xrayBadge.innerText = "<%=translate('● 已选用 (系统内置)')%>";
+        xrayPath.style.color = "#2563eb";
+        xrayPath.innerText = cs.xray_path || "/usr/bin/xray";
+        xraySlot.innerHTML = cs.custom_core_available 
+            ? '<button class="cbi-button cbi-button-apply" style="font-weight:bold;" onclick="doSwitchSource(\'custom\', null)"><%=translate("切换为自定义核心")%></button>'
+            : '<button class="cbi-button" disabled title="<%=translate("请先上传自定义核心后即可一键切换")%>"><%=translate("未上传自定义")%></button>';
+    } else if (cs.active_core_source === "builtin_fallback") {
+        xrayBadge.className = "xc-badge xc-badge-warning";
+        xrayBadge.innerText = "<%=translate('○ 系统保底生效中 (未上传自定义)')%>";
+        xrayPath.style.color = "#f59e0b";
+        xrayPath.innerText = (cs.xray_path || "/usr/bin/xray") + " (内置兜底)";
+        xraySlot.innerHTML = '<button class="cbi-button" onclick="doSwitchSource(\'builtin\', null)" title="<%=translate("锁定为系统内置，不再提示保底")%>"><%=translate("切为系统内置")%></button>';
+    } else {
+        xrayBadge.className = "xc-badge xc-badge-danger";
+        xrayBadge.innerText = "<%=translate('● 缺失 (未安装)')%>";
+        xrayPath.style.color = "#dc2626";
+        xrayPath.innerText = "<%=translate('未找到 (/etc/xc/bin/xray, /usr/bin/xray)')%>";
+        xraySlot.innerHTML = "";
+    }
+
+    var geositeBadge = document.getElementById("asset-geosite-badge");
+    var geositePath = document.getElementById("asset-geosite-path");
+    var geositeSlot = document.getElementById("asset-geosite-switch-slot");
+    var geoipBadge = document.getElementById("asset-geoip-badge");
+    var geoipPath = document.getElementById("asset-geoip-path");
+    var geoipSlot = document.getElementById("asset-geoip-switch-slot");
+
+    if (cs.active_asset_source === "custom") {
+        geositeBadge.className = "xc-badge xc-badge-success";
+        geositeBadge.innerText = "<%=translate('● 已选用 (自定义规则)')%>";
+        geositePath.style.color = "#2563eb";
+        geositePath.innerText = cs.geosite_path || "/etc/xc/assets/geosite.dat";
+
+        geoipBadge.className = "xc-badge xc-badge-success";
+        geoipBadge.innerText = "<%=translate('● 已选用 (自定义规则)')%>";
+        geoipPath.style.color = "#2563eb";
+        geoipPath.innerText = cs.geoip_path || "/etc/xc/assets/geoip.dat";
+
+        var btnAssetBuiltin = cs.builtin_asset_available 
+            ? '<button class="cbi-button" onclick="doSwitchSource(null, \'builtin\')"><%=translate("切为系统内置")%></button>'
+            : '';
+        geositeSlot.innerHTML = btnAssetBuiltin;
+        geoipSlot.innerHTML = btnAssetBuiltin;
+    } else if (cs.active_asset_source === "builtin") {
+        geositeBadge.className = "xc-badge";
+        geositeBadge.style.backgroundColor = "#2563eb";
+        geositeBadge.style.color = "#fff";
+        geositeBadge.innerText = "<%=translate('● 已选用 (系统内置)')%>";
+        geositePath.style.color = "#2563eb";
+        geositePath.innerText = cs.geosite_path || "/usr/share/xray/geosite.dat";
+
+        geoipBadge.className = "xc-badge";
+        geoipBadge.style.backgroundColor = "#2563eb";
+        geoipBadge.style.color = "#fff";
+        geoipBadge.innerText = "<%=translate('● 已选用 (系统内置)')%>";
+        geoipPath.style.color = "#2563eb";
+        geoipPath.innerText = cs.geoip_path || "/usr/share/xray/geoip.dat";
+
+        var btnAssetCustom = cs.custom_asset_available 
+            ? '<button class="cbi-button cbi-button-apply" style="font-weight:bold;" onclick="doSwitchSource(null, \'custom\')"><%=translate("切换为自定义规则")%></button>'
+            : '<button class="cbi-button" disabled title="<%=translate("请先上传自定义规则库后即可一键切换")%>"><%=translate("未上传自定义")%></button>';
+        geositeSlot.innerHTML = btnAssetCustom;
+        geoipSlot.innerHTML = btnAssetCustom;
+    } else if (cs.active_asset_source === "builtin_fallback") {
+        geositeBadge.className = "xc-badge xc-badge-warning";
+        geositeBadge.innerText = "<%=translate('○ 系统保底生效中 (未上传自定义)')%>";
+        geositePath.style.color = "#f59e0b";
+        geositePath.innerText = (cs.geosite_path || "") + " (内置兜底)";
+
+        geoipBadge.className = "xc-badge xc-badge-warning";
+        geoipBadge.innerText = "<%=translate('○ 系统保底生效中 (未上传自定义)')%>";
+        geoipPath.style.color = "#f59e0b";
+        geoipPath.innerText = (cs.geoip_path || "") + " (内置兜底)";
+
+        var btnLockBuiltin = '<button class="cbi-button" onclick="doSwitchSource(null, \'builtin\')" title="<%=translate("锁定为系统内置，不再提示保底")%>"><%=translate("切为系统内置")%></button>';
+        geositeSlot.innerHTML = btnLockBuiltin;
+        geoipSlot.innerHTML = btnLockBuiltin;
+    } else {
+        geositeBadge.className = cs.geosite_ok ? "xc-badge xc-badge-success" : "xc-badge xc-badge-danger";
+        geositeBadge.innerText = cs.geosite_ok ? "<%=translate('● 已就绪')%>" : "<%=translate('● 缺失 (未安装)')%>";
+        geositePath.innerText = cs.geosite_path || "<%=translate('未找到规则文件')%>";
+        geositeSlot.innerHTML = "";
+
+        geoipBadge.className = cs.geoip_ok ? "xc-badge xc-badge-success" : "xc-badge xc-badge-danger";
+        geoipBadge.innerText = cs.geoip_ok ? "<%=translate('● 已就绪')%>" : "<%=translate('● 缺失 (未安装)')%>";
+        geoipPath.innerText = cs.geoip_path || "<%=translate('未找到规则文件')%>";
+        geoipSlot.innerHTML = "";
+    }
+
     var nodes = appData.nodesData.nodes || [];
     var curNode = nodes.find(function(n) { return Number(n.id) === Number(st.current_id); });
     var fixedNode = nodes.find(function(n) { return Number(n.id) === Number(appData.nodesData.fixed_proxy_id); });
@@ -314,8 +567,13 @@ function renderStatus() {
             ? ("#" + curNode.id + " " + curNode.name + " (" + curNode.type + ")") 
             : "<%=translate('未选择')%>";
 
+        // 单节点或固定分流节点未匹配时，自动联动对齐当前活动节点
+        if ((!fixedNode || nodes.length <= 1) && curNode) {
+            fixedNode = curNode;
+        }
+
         document.getElementById("stat-fixed-node").innerText = fixedNode 
-            ? ("#" + fixedNode.id + " " + fixedNode.name) 
+            ? ("#" + fixedNode.id + " " + fixedNode.name + " (" + fixedNode.type + ")") 
             : ("ID: " + (appData.nodesData.fixed_proxy_id || "<%=translate('未指定')%>"));
     }
 
@@ -327,6 +585,202 @@ function renderStatus() {
     var socks = st.socks_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
     var http = st.http_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
     document.getElementById("stat-ports-info").innerHTML = "SOCKS5: <strong>" + sHost + ":" + sPort + "</strong> (" + socks + ") | HTTP: <strong>" + hHost + ":" + hPort + "</strong> (" + http + ") | DoH: 1.1.1.1 (<%=translate('防泄露')%>)";
+}
+
+var curUploadXhr = null;
+
+function closeUploadModal() {
+    if (curUploadXhr) {
+        curUploadXhr.abort();
+        curUploadXhr = null;
+    }
+    document.getElementById("xc-upload-modal-mask").classList.add("xc-hidden");
+}
+
+function cancelUpload() {
+    if (curUploadXhr) {
+        curUploadXhr.abort();
+        curUploadXhr = null;
+    }
+    var msgBox = document.getElementById("xc-upload-msg-box");
+    msgBox.style.display = "block";
+    msgBox.style.background = "#fffbeb";
+    msgBox.style.border = "1px solid #fde68a";
+    msgBox.style.color = "#b45309";
+    msgBox.innerHTML = "<%=translate('上传已被用户手动取消。')%>";
+    document.getElementById("xc-upload-status-text").innerText = "<%=translate('上传已取消')%>";
+    document.getElementById("xc-upload-btn-cancel").classList.add("xc-hidden");
+    document.getElementById("xc-upload-btn-close").classList.remove("xc-hidden");
+    document.getElementById("xc-upload-modal-close").style.display = "block";
+}
+
+function doUploadAsset(type, title) {
+    var input = document.createElement("input");
+    input.type = "file";
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", function() {
+        if (!input.files || input.files.length === 0) {
+            document.body.removeChild(input);
+            return;
+        }
+        var file = input.files[0];
+        document.body.removeChild(input);
+
+        var mask = document.getElementById("xc-upload-modal-mask");
+        var pbar = document.getElementById("xc-upload-progressbar");
+        var stats = document.getElementById("xc-upload-stats");
+        var statusText = document.getElementById("xc-upload-status-text");
+        var msgBox = document.getElementById("xc-upload-msg-box");
+        var btnCancel = document.getElementById("xc-upload-btn-cancel");
+        var btnClose = document.getElementById("xc-upload-btn-close");
+        var closeX = document.getElementById("xc-upload-modal-close");
+        var icon = document.getElementById("xc-upload-icon");
+
+        document.getElementById("xc-upload-title-text").innerText = "<%=translate('上传并安装')%> " + title;
+        document.getElementById("xc-upload-filename").innerText = file.name;
+        var totalMB = (file.size / (1024 * 1024)).toFixed(2);
+        document.getElementById("xc-upload-filesize").innerText = totalMB + " MB";
+
+        pbar.style.width = "0%";
+        pbar.style.background = "linear-gradient(90deg, #3b82f6, #2563eb)";
+        stats.style.color = "#2563eb";
+        stats.innerText = "0% (0.00 / " + totalMB + " MB)";
+        statusText.innerText = "<%=translate('正在连接路由器并准备上传...')%>";
+        msgBox.style.display = "none";
+        msgBox.innerHTML = "";
+        btnCancel.classList.remove("xc-hidden");
+        btnClose.classList.add("xc-hidden");
+        closeX.style.display = "none";
+        icon.innerText = "📤";
+        mask.classList.remove("xc-hidden");
+
+        var formData = new FormData();
+        formData.append("type", type);
+        formData.append("file", file);
+        formData.append("token", "<%=token%>");
+
+        var uploadUrl = BASE_URL + "/upload?type=" + encodeURIComponent(type);
+
+        var xhr = new XMLHttpRequest();
+        curUploadXhr = xhr;
+        var startTime = Date.now();
+
+        xhr.upload.onprogress = function(e) {
+            if (e.lengthComputable) {
+                var percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+                pbar.style.width = percent + "%";
+                var loadedMB = (e.loaded / (1024 * 1024)).toFixed(2);
+                stats.innerText = percent + "% (" + loadedMB + " / " + totalMB + " MB)";
+
+                if (percent >= 100) {
+                    statusText.innerText = "<%=translate('文件数据已全部传输完毕，正在服务端写入并校验架构与权限...')%>";
+                    pbar.style.background = "linear-gradient(90deg, #10b981, #059669)";
+                } else {
+                    var elapsedSec = (Date.now() - startTime) / 1000;
+                    if (elapsedSec > 0.4) {
+                        var speedKB = ((e.loaded / 1024) / elapsedSec).toFixed(0);
+                        var speedStr = speedKB > 1024 ? (speedKB / 1024).toFixed(1) + " MB/s" : speedKB + " KB/s";
+                        statusText.innerText = "<%=translate('正在高速上传中')%> (" + speedStr + ")...";
+                    } else {
+                        statusText.innerText = "<%=translate('正在上传中...')%>";
+                    }
+                }
+            }
+        };
+
+        xhr.onload = function() {
+            curUploadXhr = null;
+            btnCancel.classList.add("xc-hidden");
+            btnClose.classList.remove("xc-hidden");
+            closeX.style.display = "block";
+
+            var res = null;
+            var rawText = (xhr.responseText || "").trim();
+            try {
+                res = JSON.parse(rawText);
+            } catch (err) {
+                var lastBrace = rawText.lastIndexOf("{");
+                if (lastBrace >= 0) {
+                    try { res = JSON.parse(rawText.substring(lastBrace)); } catch (e2) { res = null; }
+                }
+            }
+
+            if (xhr.status === 200 && res && res.code === 0) {
+                pbar.style.width = "100%";
+                pbar.style.background = "#10b981";
+                stats.innerText = "100% - <%=translate('安装成功')%>";
+                stats.style.color = "#10b981";
+                statusText.innerText = "<%=translate('文件检验通过并已持久化保存！')%>";
+                icon.innerText = "✅";
+
+                msgBox.style.display = "block";
+                msgBox.style.background = "#ecfdf5";
+                msgBox.style.border = "1px solid #a7f3d0";
+                msgBox.style.color = "#065f46";
+                msgBox.innerHTML = "<strong>" + title + " <%=translate('已成功部署！')%></strong><br>" + (res.message || "") + "<br><span style='font-size:12px; color:#047857;'><%=translate('面板将在 1.5 秒后自动刷新状态...')%></span>";
+
+                setTimeout(function() {
+                    window.location.reload();
+                }, 1500);
+            } else {
+                pbar.style.background = "#ef4444";
+                stats.style.color = "#ef4444";
+                stats.innerText = "<%=translate('处理失败')%>";
+                statusText.innerText = "<%=translate('校验或保存未通过')%>";
+                icon.innerText = "❌";
+
+                msgBox.style.display = "block";
+                msgBox.style.background = "#fef2f2";
+                msgBox.style.border = "1px solid #fecaca";
+                msgBox.style.color = "#991b1b";
+                var errMsg = (res && res.message) ? res.message : ("HTTP " + xhr.status + ": " + (xhr.statusText || "<%=translate('服务端未响应有效结果')%>") + (rawText ? (" (" + rawText.substring(0, 100) + ")") : ""));
+                msgBox.innerHTML = "<strong><%=translate('上传安装失败：')%></strong><br>" + errMsg;
+            }
+        };
+
+        xhr.onerror = function() {
+            curUploadXhr = null;
+            btnCancel.classList.add("xc-hidden");
+            btnClose.classList.remove("xc-hidden");
+            closeX.style.display = "block";
+            pbar.style.background = "#ef4444";
+            stats.style.color = "#ef4444";
+            stats.innerText = "<%=translate('网络异常')%>";
+            statusText.innerText = "<%=translate('连接中断')%>";
+            icon.innerText = "❌";
+
+            msgBox.style.display = "block";
+            msgBox.style.background = "#fef2f2";
+            msgBox.style.border = "1px solid #fecaca";
+            msgBox.style.color = "#991b1b";
+            msgBox.innerHTML = "<strong><%=translate('网络连接错误：')%></strong><br><%=translate('无法连通路由器接口，请检查路由器网络连接或刷新页面后重新登录。')%>";
+        };
+
+        xhr.ontimeout = function() {
+            curUploadXhr = null;
+            btnCancel.classList.add("xc-hidden");
+            btnClose.classList.remove("xc-hidden");
+            closeX.style.display = "block";
+            pbar.style.background = "#ef4444";
+            stats.style.color = "#ef4444";
+            stats.innerText = "<%=translate('请求超时')%>";
+            statusText.innerText = "<%=translate('上传超时')%>";
+            icon.innerText = "⏱️";
+
+            msgBox.style.display = "block";
+            msgBox.style.background = "#fef2f2";
+            msgBox.style.border = "1px solid #fecaca";
+            msgBox.style.color = "#991b1b";
+            msgBox.innerHTML = "<strong><%=translate('上传请求超时：')%></strong><br><%=translate('文件体积较大或网络较慢导致请求超时，请检查路由器负荷后重试。')%>";
+        };
+
+        xhr.open("POST", uploadUrl, true);
+        xhr.send(formData);
+    });
+
+    input.click();
 }
 
 function renderNodes() {
@@ -356,9 +810,17 @@ function renderNodes() {
             ? ' <span style="font-size:10px; background:#e0e7ff; color:#3730a3; padding:1px 5px; border-radius:3px;"><%=translate("固定分流")%></span>' 
             : '';
 
-        var switchBtn = isCur 
-            ? '<button class="cbi-button" disabled><%=translate("使用中")%></button>' 
-            : '<button class="cbi-button cbi-button-apply" onclick="doSwitchNode(' + node.id + ')"><%=translate("切换")%></button>';
+        var isRunning = appData.status && appData.status.running;
+        var switchBtn = '';
+        if (isCur) {
+            if (isRunning) {
+                switchBtn = '<button class="cbi-button" disabled><%=translate("使用中")%></button>';
+            } else {
+                switchBtn = '<button class="cbi-button cbi-button-save" style="font-weight:bold;" onclick="doSwitchNode(' + node.id + ')"><%=translate("▶ 启动此节点")%></button>';
+            }
+        } else {
+            switchBtn = '<button class="cbi-button cbi-button-apply" onclick="doSwitchNode(' + node.id + ')"><%=translate("切换")%></button>';
+        }
 
         var delBtn = '<button class="cbi-button cbi-button-remove" style="margin-left:4px;" ' 
             + ((isCur || isFixed) ? 'disabled title="<%=translate("活动节点或固定节点不可删除")%>"' : '') 
@@ -401,11 +863,15 @@ function renderSettings() {
         opt.text = "<%=translate('暂无可用节点')%>";
         sel.appendChild(opt);
     } else {
+        var curFixed = appData.nodesData.fixed_proxy_id;
+        if (!curFixed && nodes.length === 1) {
+            curFixed = nodes[0].id;
+        }
         nodes.forEach(function(n) {
             var opt = document.createElement("option");
             opt.value = n.id;
             opt.text = "#" + n.id + " " + n.name + " (" + n.type + ")";
-            if (Number(n.id) === Number(appData.nodesData.fixed_proxy_id)) opt.selected = true;
+            if (Number(n.id) === Number(curFixed)) opt.selected = true;
             sel.appendChild(opt);
         });
     }
@@ -420,6 +886,10 @@ function doSwitchNode(id) {
     fetch(BASE_URL + "/switch_node?id=" + id).then(function(r) { return r.json(); }).then(function(res) {
         if (res && res.code === 0) {
             alert("<%=translate('节点切换成功！双端口出口代理访问正常。')%>");
+            var nodes = (appData.nodesData && appData.nodesData.nodes) || [];
+            if (nodes.length <= 1 || !appData.nodesData.fixed_proxy_id) {
+                if (appData.nodesData) appData.nodesData.fixed_proxy_id = Number(id);
+            }
             loadAll();
         } else {
             alert("<%=translate('切换失败，已安全回滚：')%>\n" + (res.message || ""));
@@ -471,6 +941,37 @@ function doRefreshAllSpeed() {
     });
 }
 
+function doRestartService() {
+    var slot = document.getElementById("service-control-slot");
+    if (slot) slot.innerHTML = '<span class="xc-spin" style="color:#2563eb;">⟳</span> <%=translate("正在启动/重载服务...")%>';
+
+    fetch(BASE_URL + "/restart_service").then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            alert("<%=translate('服务已成功启动并验证通过！')%>");
+            loadAll();
+        } else {
+            alert("<%=translate('服务启动失败：')%>\n" + (res.message || ""));
+            loadAll();
+        }
+    }).catch(function(e) {
+        alert("<%=translate('请求出错：')%> " + e);
+        loadAll();
+    });
+}
+
+function doStopService() {
+    if (!confirm("<%=translate('确定要停止 Xray 代理服务吗？停止后代理端口将暂停监听。')%>")) return;
+    var slot = document.getElementById("service-control-slot");
+    if (slot) slot.innerHTML = '<span class="xc-spin" style="color:#ef4444;">⟳</span> <%=translate("正在停止...")%>';
+
+    fetch(BASE_URL + "/stop_service").then(function(r) { return r.json(); }).then(function(res) {
+        loadAll();
+    }).catch(function(e) {
+        alert("<%=translate('请求出错：')%> " + e);
+        loadAll();
+    });
+}
+
 function doTestHealth() {
     var sPort = (appData.status && appData.status.socks_port) || (appData.settings && appData.settings.socks_port) || 7890;
     var hPort = (appData.status && appData.status.http_port) || (appData.settings && appData.settings.http_port) || 10809;
@@ -484,15 +985,28 @@ function doTestHealth() {
     });
 }
 
-function doRollback() {
-    if (!confirm("<%=translate('确认回滚到上一份备份配置吗？')%>")) return;
-    fetch(BASE_URL + "/rollback").then(function(r) { return r.json(); }).then(function(res) {
+function doSwitchSource(coreSource, assetSource) {
+    var desc = "";
+    if (coreSource) desc += (coreSource === "builtin" ? "<%=translate('切换为内置核心')%>" : "<%=translate('切换为自定义核心')%>");
+    if (assetSource) desc += (desc ? "，" : "") + (assetSource === "builtin" ? "<%=translate('切换为内置规则库')%>" : "<%=translate('切换为自定义规则库')%>");
+    if (!confirm("<%=translate('确定要')%> " + desc + " <%=translate('吗？系统将自动重载 Xray 进程生效。')%>")) return;
+
+    var payload = {};
+    if (coreSource) payload.core_source = coreSource;
+    if (assetSource) payload.asset_source = assetSource;
+
+    fetch(BASE_URL + "/switch_source", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    }).then(function(r) { return r.json(); }).then(function(res) {
         if (res && res.code === 0) {
-            alert("<%=translate('回滚成功！')%>");
             loadAll();
         } else {
-            alert("<%=translate('回滚失败：')%>\n" + (res.message || ""));
+            alert("<%=translate('切换失败：')%> " + (res.message || ""));
         }
+    }).catch(function(e) {
+        alert("<%=translate('请求出错：')%> " + e);
     });
 }
 

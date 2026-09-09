@@ -50,9 +50,22 @@ var callDeleteNode = rpc.declare({
 	expect: {}
 });
 
-var callRollback = rpc.declare({
+var callSwitchSource = rpc.declare({
 	object: 'luci.xc',
-	method: 'rollback',
+	method: 'switch_source',
+	params: [ 'core_source', 'asset_source' ],
+	expect: {}
+});
+
+var callRestartService = rpc.declare({
+	object: 'luci.xc',
+	method: 'restart_service',
+	expect: {}
+});
+
+var callStopService = rpc.declare({
+	object: 'luci.xc',
+	method: 'stop_service',
 	expect: {}
 });
 
@@ -78,6 +91,433 @@ return view.extend({
 		]);
 	},
 
+	renderMissingAlert: function(status) {
+		var cs = status && status.core_status;
+		if (!cs || cs.ready) {
+			return E('div', { 'style': 'display:none;' });
+		}
+		var missingNames = [];
+		if (!cs.xray_ok) missingNames.push(_('Xray 核心程序 (xray)'));
+		if (!cs.geosite_ok) missingNames.push(_('GeoSite 域名规则库 (geosite.dat)'));
+		if (!cs.geoip_ok) missingNames.push(_('GeoIP IP规则库 (geoip.dat)'));
+
+		return E('div', {
+			'class': 'alert-message danger',
+			'style': 'margin-bottom: 20px; border-left: 5px solid #ef4444; background: #fef2f2; padding: 14px 18px; border-radius: 6px; color: #991b1b; box-shadow: 0 1px 3px rgba(0,0,0,0.08);'
+		}, [
+			E('h4', { 'style': 'margin: 0 0 6px 0; color: #b91c1c; font-size: 15px; display: flex; align-items: center;' }, [
+				E('span', { 'style': 'font-size: 18px; margin-right: 8px;' }, '⚠️'),
+				_('核心文件或路由规则丢失，服务无法正常启动！')
+			]),
+			E('p', { 'style': 'margin: 0; font-size: 13px; line-height: 1.5;' }, [
+				_('检测到以下必要组件缺失：'),
+				E('strong', { 'style': 'color: #dc2626; margin: 0 4px;' }, missingNames.join('、')),
+				_('。请在下方「核心组件与规则文件管理」区域上传对应的文件。若已上传或安装，请确认文件路径及可执行权限。系统错误已同步输出至系统日志 (logread)。')
+			])
+		]);
+	},
+
+	triggerUpload: function(type, title) {
+		var self = this;
+		var input = document.createElement('input');
+		input.type = 'file';
+		input.style.display = 'none';
+		document.body.appendChild(input);
+
+		input.addEventListener('change', function() {
+			if (!input.files || input.files.length === 0) {
+				document.body.removeChild(input);
+				return;
+			}
+			var file = input.files[0];
+			document.body.removeChild(input);
+
+			var totalMB = (file.size / (1024 * 1024)).toFixed(2);
+
+			var pbar = E('div', {
+				'style': 'width: 0%; height: 100%; background: linear-gradient(90deg, #3b82f6, #2563eb); border-radius: 8px; transition: width 0.12s ease-out;'
+			});
+			var pbarTrack = E('div', {
+				'style': 'width: 100%; height: 16px; background-color: #e5e7eb; border-radius: 8px; overflow: hidden; margin: 12px 0 8px 0; box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);'
+			}, [ pbar ]);
+
+			var statsText = E('span', {
+				'style': 'font-family: monospace; font-weight: bold; color: #2563eb;'
+			}, '0% (0.00 / ' + totalMB + ' MB)');
+
+			var statusText = E('span', {
+				'style': 'color: #4b5563;'
+			}, _('正在连接路由器并准备上传...'));
+
+			var infoRow = E('div', {
+				'style': 'display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 12px;'
+			}, [ statusText, statsText ]);
+
+			var msgBox = E('div', {
+				'style': 'display: none; padding: 10px 14px; border-radius: 6px; font-size: 13px; line-height: 1.5; margin-bottom: 12px;'
+			});
+
+			var currentXhr = null;
+
+			var btnCancel = E('button', {
+				'class': 'cbi-button cbi-button-reset',
+				'click': function() {
+					if (currentXhr) {
+						currentXhr.abort();
+						currentXhr = null;
+					}
+					statusText.innerText = _('上传已取消');
+					msgBox.style.display = 'block';
+					msgBox.style.background = '#fffbeb';
+					msgBox.style.border = '1px solid #fde68a';
+					msgBox.style.color = '#b45309';
+					msgBox.innerHTML = _('已由用户手动取消上传。');
+					btnCancel.style.display = 'none';
+					btnClose.style.display = 'inline-block';
+				}
+			}, _('取消上传'));
+
+			var btnClose = E('button', {
+				'class': 'cbi-button cbi-button-action',
+				'style': 'display: none;',
+				'click': ui.hideModal
+			}, _('关闭'));
+
+			var modalBody = E('div', { 'style': 'padding: 5px 0;' }, [
+				E('div', { 'style': 'display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px;' }, [
+					E('strong', { 'style': 'font-family: monospace; color: #111827;' }, file.name),
+					E('span', { 'style': 'color: #6b7280; font-family: monospace;' }, totalMB + ' MB')
+				]),
+				pbarTrack,
+				infoRow,
+				msgBox,
+				E('div', { 'class': 'right', 'style': 'margin-top: 15px;' }, [
+					btnCancel,
+					btnClose
+				])
+			]);
+
+			ui.showModal(_('上传并部署 ') + title, [ modalBody ]);
+
+			var formData = new FormData();
+			formData.append('type', type);
+			formData.append('file', file);
+			if (L.env && L.env.token) {
+				formData.append('token', L.env.token);
+			}
+
+			var uploadUrl = L.url('admin/services/xc/upload') + '?type=' + encodeURIComponent(type);
+			var xhr = new XMLHttpRequest();
+			currentXhr = xhr;
+			var startTime = Date.now();
+
+			xhr.upload.onprogress = function(e) {
+				if (e.lengthComputable) {
+					var percent = Math.min(100, Math.round((e.loaded / e.total) * 100));
+					pbar.style.width = percent + '%';
+					var loadedMB = (e.loaded / (1024 * 1024)).toFixed(2);
+					statsText.innerText = percent + '% (' + loadedMB + ' / ' + totalMB + ' MB)';
+
+					if (percent >= 100) {
+						statusText.innerText = _('文件数据已上传完毕，正在服务端写入并校验架构与权限...');
+						pbar.style.background = 'linear-gradient(90deg, #10b981, #059669)';
+					} else {
+						var elapsedSec = (Date.now() - startTime) / 1000;
+						if (elapsedSec > 0.4) {
+							var speedKB = ((e.loaded / 1024) / elapsedSec).toFixed(0);
+							var speedStr = speedKB > 1024 ? (speedKB / 1024).toFixed(1) + ' MB/s' : speedKB + ' KB/s';
+							statusText.innerText = _('正在高速上传中') + ' (' + speedStr + ')...';
+						} else {
+							statusText.innerText = _('正在上传中...');
+						}
+					}
+				}
+			};
+
+			xhr.onload = function() {
+				currentXhr = null;
+				btnCancel.style.display = 'none';
+				btnClose.style.display = 'inline-block';
+
+				var res = null;
+				var rawText = (xhr.responseText || '').trim();
+				try {
+					res = JSON.parse(rawText);
+				} catch(err) {
+					var lastBrace = rawText.lastIndexOf('{');
+					if (lastBrace >= 0) {
+						try { res = JSON.parse(rawText.substring(lastBrace)); } catch(e2) { res = null; }
+					}
+				}
+
+				if (xhr.status === 200 && res && res.code === 0) {
+					pbar.style.width = '100%';
+					pbar.style.background = '#10b981';
+					statsText.innerText = '100% - ' + _('部署成功');
+					statsText.style.color = '#10b981';
+					statusText.innerText = _('文件校验通过并已就绪！');
+
+					msgBox.style.display = 'block';
+					msgBox.style.background = '#ecfdf5';
+					msgBox.style.border = '1px solid #a7f3d0';
+					msgBox.style.color = '#065f46';
+					msgBox.innerHTML = '<strong>' + title + _(' 上传并部署成功！') + '</strong><br>' + (res.message || '') + '<br><span style="font-size:12px; color:#047857;">' + _('页面将在 1.5 秒后自动刷新...') + '</span>';
+
+					setTimeout(function() {
+						window.location.reload();
+					}, 1500);
+				} else {
+					pbar.style.background = '#ef4444';
+					statsText.style.color = '#ef4444';
+					statsText.innerText = _('处理失败');
+					statusText.innerText = _('校验未通过');
+
+					msgBox.style.display = 'block';
+					msgBox.style.background = '#fef2f2';
+					msgBox.style.border = '1px solid #fecaca';
+					msgBox.style.color = '#991b1b';
+					var errMsg = (res && res.message) ? res.message : ('HTTP ' + xhr.status + ': ' + (xhr.statusText || _('服务端未返回有效结果')) + (rawText ? (' (' + rawText.substring(0, 100) + ')') : ''));
+					msgBox.innerHTML = '<strong>' + _('上传安装失败：') + '</strong><br>' + errMsg;
+				}
+			};
+
+			xhr.onerror = function() {
+				currentXhr = null;
+				btnCancel.style.display = 'none';
+				btnClose.style.display = 'inline-block';
+				pbar.style.background = '#ef4444';
+				statsText.style.color = '#ef4444';
+				statsText.innerText = _('网络异常');
+				statusText.innerText = _('连接中断');
+
+				msgBox.style.display = 'block';
+				msgBox.style.background = '#fef2f2';
+				msgBox.style.border = '1px solid #fecaca';
+				msgBox.style.color = '#991b1b';
+				msgBox.innerHTML = '<strong>' + _('网络连接错误：') + '</strong><br>' + _('无法连接至路由器接口，请检查网络连接或刷新页面重新登录。');
+			};
+
+			xhr.ontimeout = function() {
+				currentXhr = null;
+				btnCancel.style.display = 'none';
+				btnClose.style.display = 'inline-block';
+				pbar.style.background = '#ef4444';
+				statsText.style.color = '#ef4444';
+				statsText.innerText = _('请求超时');
+				statusText.innerText = _('上传超时');
+
+				msgBox.style.display = 'block';
+				msgBox.style.background = '#fef2f2';
+				msgBox.style.border = '1px solid #fecaca';
+				msgBox.style.color = '#991b1b';
+				msgBox.innerHTML = '<strong>' + _('上传请求超时：') + '</strong><br>' + _('文件体积较大或网络较慢导致请求超时，请重试。');
+			};
+
+			xhr.open('POST', uploadUrl, true);
+			xhr.send(formData);
+		});
+
+		input.click();
+	},
+
+	handleSwitchSource: function(coreSource, assetSource) {
+		var self = this;
+		var desc = '';
+		if (coreSource) desc += (coreSource === 'builtin' ? _('切换为内置核心') : _('切换为自定义核心'));
+		if (assetSource) desc += (desc ? '，' : '') + (assetSource === 'builtin' ? _('切换为内置规则库') : _('切换为自定义规则库'));
+		if (!confirm(_('确定要 ') + desc + _(' 吗？系统将自动重载 Xray 进程生效。'))) return;
+
+		callSwitchSource(coreSource, assetSource).then(function(res) {
+			if (res && res.code === 0) {
+				ui.addNotification(null, E('p', {}, _('核心/规则来源已切换并重新加载服务！')), 'success');
+				window.location.reload();
+			} else {
+				ui.addNotification(null, E('p', {}, _('切换失败：') + (res.message || '')), 'danger');
+			}
+		}).catch(function(e) {
+			ui.addNotification(null, E('p', {}, _('请求异常：') + e), 'danger');
+		});
+	},
+
+	renderCoreAssetsSection: function(status) {
+		var self = this;
+		var cs = (status && status.core_status) || { xray_ok: false, geosite_ok: false, geoip_ok: false };
+
+		var xrayModeText = _('● 缺失 (未安装)');
+		var xrayBadgeStyle = 'background-color:#ef4444; color:#fff;';
+		var xraySwitchBtn = null;
+
+		if (cs.active_core_source === 'custom') {
+			xrayModeText = _('● 已选用 (自定义核心)');
+			xrayBadgeStyle = 'background-color:#10b981; color:#fff;';
+			if (cs.builtin_core_available) {
+				xraySwitchBtn = E('button', {
+					'class': 'cbi-button',
+					'style': 'margin-right: 6px;',
+					'click': function() { self.handleSwitchSource('builtin', null); }
+				}, _('切为系统内置'));
+			}
+		} else if (cs.active_core_source === 'builtin') {
+			xrayModeText = _('● 已选用 (系统内置)');
+			xrayBadgeStyle = 'background-color:#2563eb; color:#fff;';
+			if (cs.custom_core_available) {
+				xraySwitchBtn = E('button', {
+					'class': 'cbi-button cbi-button-apply',
+					'style': 'margin-right: 6px; font-weight:bold;',
+					'click': function() { self.handleSwitchSource('custom', null); }
+				}, _('切换为自定义核心'));
+			} else {
+				xraySwitchBtn = E('button', {
+					'class': 'cbi-button',
+					'style': 'margin-right: 6px;',
+					'disabled': true,
+					'title': _('请先上传自定义核心后即可一键切换')
+				}, _('未上传自定义'));
+			}
+		} else if (cs.active_core_source === 'builtin_fallback') {
+			xrayModeText = _('○ 系统保底生效中 (未上传自定义)');
+			xrayBadgeStyle = 'background-color:#f59e0b; color:#fff;';
+			xraySwitchBtn = E('button', {
+				'class': 'cbi-button',
+				'style': 'margin-right: 6px;',
+				'title': _('锁定为系统内置，不再提示保底'),
+				'click': function() { self.handleSwitchSource('builtin', null); }
+			}, _('切为系统内置'));
+		}
+
+		var assetModeText = _('● 缺失 (未安装)');
+		var assetBadgeStyle = 'background-color:#ef4444; color:#fff;';
+		var assetSwitchBtn = null;
+
+		if (cs.active_asset_source === 'custom') {
+			assetModeText = _('● 已选用 (自定义规则)');
+			assetBadgeStyle = 'background-color:#10b981; color:#fff;';
+			if (cs.builtin_asset_available) {
+				assetSwitchBtn = function() {
+					return E('button', {
+						'class': 'cbi-button',
+						'style': 'margin-right: 6px;',
+						'click': function() { self.handleSwitchSource(null, 'builtin'); }
+					}, _('切为系统内置'));
+				};
+			}
+		} else if (cs.active_asset_source === 'builtin') {
+			assetModeText = _('● 已选用 (系统内置)');
+			assetBadgeStyle = 'background-color:#2563eb; color:#fff;';
+			if (cs.custom_asset_available) {
+				assetSwitchBtn = function() {
+					return E('button', {
+						'class': 'cbi-button cbi-button-apply',
+						'style': 'margin-right: 6px; font-weight:bold;',
+						'click': function() { self.handleSwitchSource(null, 'custom'); }
+					}, _('切换为自定义规则'));
+				};
+			} else {
+				assetSwitchBtn = function() {
+					return E('button', {
+						'class': 'cbi-button',
+						'style': 'margin-right: 6px;',
+						'disabled': true,
+						'title': _('请先上传自定义规则库后即可一键切换')
+					}, _('未上传自定义'));
+				};
+			}
+		} else if (cs.active_asset_source === 'builtin_fallback') {
+			assetModeText = _('○ 系统保底生效中 (未上传自定义)');
+			assetBadgeStyle = 'background-color:#f59e0b; color:#fff;';
+			assetSwitchBtn = function() {
+				return E('button', {
+					'class': 'cbi-button',
+					'style': 'margin-right: 6px;',
+					'title': _('锁定为系统内置，不再提示保底'),
+					'click': function() { self.handleSwitchSource(null, 'builtin'); }
+				}, _('切为系统内置'));
+			};
+		}
+
+		var items = [
+			{
+				key: 'xray',
+				title: _('Xray 核心程序 (xray)'),
+				desc: _('支持 Linux ELF 程序或 .tar.gz 压缩包上传（自动解压并校验），内置核心自动保底'),
+				ok: cs.xray_ok,
+				path: cs.xray_path || _('未找到 (/etc/xc/bin/xray, /usr/bin/xray)'),
+				badgeText: xrayModeText,
+				badgeStyle: xrayBadgeStyle,
+				switchBtn: xraySwitchBtn,
+				btnText: _('上传 Xray 核心')
+			},
+			{
+				key: 'geosite',
+				title: _('GeoSite 域名规则库 (geosite.dat)'),
+				desc: _('负责特定服务代理分流与直连，支持手动切换自定义/内置规则库'),
+				ok: cs.geosite_ok,
+				path: cs.geosite_path || _('未找到 (/etc/xc/assets/geosite.dat, /usr/share/xray/geosite.dat)'),
+				badgeText: assetModeText,
+				badgeStyle: assetBadgeStyle,
+				switchBtn: assetSwitchBtn ? assetSwitchBtn() : null,
+				btnText: _('上传 geosite.dat')
+			},
+			{
+				key: 'geoip',
+				title: _('GeoIP IP规则库 (geoip.dat)'),
+				desc: _('负责中国大陆 IP 直连与私网绕行，支持手动切换自定义/内置规则库'),
+				ok: cs.geoip_ok,
+				path: cs.geoip_path || _('未找到 (/etc/xc/assets/geoip.dat, /usr/share/xray/geoip.dat)'),
+				badgeText: assetModeText,
+				badgeStyle: assetBadgeStyle,
+				switchBtn: assetSwitchBtn ? assetSwitchBtn() : null,
+				btnText: _('上传 geoip.dat')
+			}
+		];
+
+		var table = E('table', { 'class': 'table cbi-section-table' }, [
+			E('tr', { 'class': 'tr table-titles' }, [
+				E('th', { 'class': 'th', 'style': 'width:140px; text-align:center;' }, _('状态 / 模式')),
+				E('th', { 'class': 'th', 'style': 'width:240px;' }, _('组件名称')),
+				E('th', { 'class': 'th' }, _('当前生效路径 / 说明')),
+				E('th', { 'class': 'th cbi-section-actions', 'style': 'width:260px; text-align:right;' }, _('操作'))
+			])
+		]);
+
+		items.forEach(function(item) {
+			var badge = E('span', {
+				'class': 'badge',
+				'style': item.badgeStyle + ' padding:3px 8px; border-radius:4px; font-weight:bold;'
+			}, item.badgeText);
+
+			var actionElements = [];
+			if (item.switchBtn) {
+				actionElements.push(item.switchBtn);
+			}
+			actionElements.push(E('button', {
+				'class': 'cbi-button cbi-button-action',
+				'click': function() {
+					self.triggerUpload(item.key, item.title);
+				}
+			}, item.btnText));
+
+			var tr = E('tr', { 'class': 'tr' }, [
+				E('td', { 'class': 'td', 'style': 'text-align:center;' }, badge),
+				E('td', { 'class': 'td' }, [
+					E('strong', {}, item.title)
+				]),
+				E('td', { 'class': 'td' }, [
+					E('div', { 'style': 'font-family:monospace; font-size:12px; color:' + (item.ok ? '#2563eb' : '#dc2626') }, item.path),
+					E('div', { 'style': 'font-size:11px; color:#888; margin-top:2px;' }, item.desc)
+				]),
+				E('td', { 'class': 'td cbi-section-actions', 'style': 'text-align:right;' }, actionElements)
+			]);
+			table.appendChild(tr);
+		});
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, _('核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)')),
+			E('div', { 'class': 'cbi-section-descr' }, _('支持网页直接上传 Xray 核心（支持 Linux ELF 或 tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。')),
+			E('div', { 'class': 'cbi-section-node' }, [ table ])
+		]);
+	},
+
 	renderStatusHeader: function(status, nodesData) {
 		var isRunning = status && status.running;
 		var curId = status ? status.current_id : null;
@@ -87,8 +527,13 @@ return view.extend({
 		var curNode = nodes.find(function(n) { return Number(n.id) === Number(curId); });
 		var fixedNode = nodes.find(function(n) { return Number(n.id) === Number(fixedId); });
 
+		// 单节点或固定分流节点未匹配时，自动联动对齐当前活动节点
+		if ((!fixedNode || nodes.length <= 1) && curNode) {
+			fixedNode = curNode;
+		}
+
 		var curText = nodes.length === 0 ? _('未选择 (节点列表为空)') : (curNode ? ('#' + curNode.id + ' ' + curNode.name + ' (' + curNode.type + ')') : _('未选择'));
-		var fixedText = nodes.length === 0 ? _('未配置') : (fixedNode ? ('#' + fixedNode.id + ' ' + fixedNode.name) : ('ID: ' + fixedId));
+		var fixedText = nodes.length === 0 ? _('未配置') : (fixedNode ? ('#' + fixedNode.id + ' ' + fixedNode.name + ' (' + fixedNode.type + ')') : ('ID: ' + fixedId));
 
 		var sPort = (status && status.socks_port) || 7890;
 		var hPort = (status && status.http_port) || 10809;
@@ -97,6 +542,14 @@ return view.extend({
 
 		var socksStatus = (status && status.socks_listening) ? _('正常监听') : _('未监听');
 		var httpStatus = (status && status.http_listening) ? _('正常监听') : _('未监听');
+
+		var cs = status && status.core_status;
+		var coreStatusText = (cs && cs.ready)
+			? _('就绪 (xray: ') + (cs.xray_path || '') + ')'
+			: _('异常：有必要组件缺失');
+		var coreBadge = (cs && cs.ready)
+			? E('span', { 'class': 'badge', 'style': 'background-color:#10b981; color:#fff; padding:2px 6px; border-radius:3px; font-weight:normal; margin-left:8px;' }, _('组件正常'))
+			: E('span', { 'class': 'badge', 'style': 'background-color:#ef4444; color:#fff; padding:2px 6px; border-radius:3px; font-weight:normal; margin-left:8px;' }, _('文件丢失'));
 
 		var self = this;
 
@@ -108,9 +561,48 @@ return view.extend({
 						isRunning 
 							? E('span', { 'class': 'badge', 'style': 'background-color:#10b981; color:#fff; padding:4px 8px; border-radius:4px; font-weight:bold;' }, _('● Xray 运行中 (PID: ') + (status.pid || 'running') + ')')
 							: E('span', { 'class': 'badge', 'style': 'background-color:#ef4444; color:#fff; padding:4px 8px; border-radius:4px; font-weight:bold;' }, _('● 服务未运行')),
+						isRunning ? E('button', {
+							'class': 'cbi-button',
+							'style': 'margin-left: 10px;',
+							'click': function() {
+								ui.showModal(_('正在重启服务'), [ E('p', {}, _('正在平滑重载 Xray 核心服务并执行连通性校验...')) ]);
+								callRestartService().then(function(res) {
+									ui.hideModal();
+									if (res && res.code === 0) {
+										ui.addNotification(null, E('p', {}, _('服务重启成功！')), 'success');
+									} else {
+										ui.addNotification(null, E('p', {}, _('服务重启失败: ') + (res.message || '')), 'danger');
+									}
+									window.location.reload();
+								});
+							}
+						}, _('⟳ 重启服务')) : E('button', {
+							'class': 'cbi-button cbi-button-save',
+							'style': 'margin-left: 10px; font-weight:bold;',
+							'click': function() {
+								ui.showModal(_('正在启动服务'), [ E('p', {}, _('正在启动 Xray 核心服务并执行连通性校验...')) ]);
+								callRestartService().then(function(res) {
+									ui.hideModal();
+									if (res && res.code === 0) {
+										ui.addNotification(null, E('p', {}, _('服务启动成功！')), 'success');
+									} else {
+										ui.addNotification(null, E('p', {}, _('服务启动失败: ') + (res.message || '')), 'danger');
+									}
+									window.location.reload();
+								});
+							}
+						}, _('▶ 启动服务')),
+						isRunning ? E('button', {
+							'class': 'cbi-button cbi-button-reset',
+							'style': 'margin-left: 5px;',
+							'click': function() {
+								if (!confirm(_('确定停止服务吗？停止后代理端口将暂停监听。'))) return;
+								callStopService().then(function() { window.location.reload(); });
+							}
+						}, _('⏹ 停止')) : '',
 						E('button', {
 							'class': 'cbi-button cbi-button-action',
-							'style': 'margin-left: 15px;',
+							'style': 'margin-left: 5px;',
 							'click': function(ev) {
 								ev.target.disabled = true;
 								ui.showModal(_('健康检查'), [ E('p', {}, _('正在测试 SOCKS 与 HTTP 代理出口连通性...')) ]);
@@ -124,22 +616,14 @@ return view.extend({
 									}
 								});
 							}
-						}, _('测试双端口连通性')),
-						E('button', {
-							'class': 'cbi-button cbi-button-reset',
-							'style': 'margin-left: 8px;',
-							'click': function() {
-								if (!confirm(_('确定要回滚到上一份节点配置吗？'))) return;
-								callRollback().then(function(res) {
-									if (res && res.code === 0) {
-										ui.addNotification(null, E('p', {}, _('配置已成功回滚！')), 'success');
-										window.location.reload();
-									} else {
-										ui.addNotification(null, E('p', {}, _('回滚失败: ') + (res.message || _('无历史备份配置'))), 'warning');
-									}
-								});
-							}
-						}, _('回滚上一节点'))
+						}, _('测试双端口连通性'))
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('核心与规则组件')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('span', {}, coreStatusText),
+						coreBadge
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -220,28 +704,30 @@ return view.extend({
 				]),
 				// Actions
 				E('td', { 'class': 'td cbi-section-actions', 'style': 'text-align:right;' }, [
-					// 1. Switch Node
-					isCur ? E('button', { 'class': 'cbi-button', 'disabled': true }, _('使用中')) :
+					// 1. Switch Node or Start Service
+					(isCur && isRunning) ? E('button', { 'class': 'cbi-button', 'disabled': true }, _('使用中')) :
 					E('button', {
-						'class': 'cbi-button cbi-button-apply',
+						'class': (isCur && !isRunning) ? 'cbi-button cbi-button-save' : 'cbi-button cbi-button-apply',
+						'style': (isCur && !isRunning) ? 'font-weight:bold;' : '',
 						'click': function(ev) {
 							ev.target.disabled = true;
-							ui.showModal(_('正在切换节点'), [
-								E('p', {}, _('正在切换到节点 #') + node.id + ' [' + node.name + ']...'),
+							var actionDesc = (isCur && !isRunning) ? _('正在启动当前节点') : (_('正在切换到节点 #') + node.id + ' [' + node.name + ']...');
+							ui.showModal((isCur && !isRunning) ? _('启动服务') : _('正在切换节点'), [
+								E('p', {}, actionDesc),
 								E('p', {}, _('正在执行 Xray 配置校验、平滑切换及全链路健康测试，请稍候...'))
 							]);
 							callSwitchNode(node.id).then(function(res) {
 								ui.hideModal();
 								if (res && res.code === 0) {
-									ui.addNotification(null, E('p', {}, _('成功切换至节点 #') + node.id + ' [' + node.name + ']！'), 'success');
+									ui.addNotification(null, E('p', {}, _('操作成功，节点已就绪！')), 'success');
 									window.location.reload();
 								} else {
-									ui.addNotification(null, E('p', {}, _('节点切换失败，已自动回滚: ') + (res.message || '')), 'danger');
+									ui.addNotification(null, E('p', {}, _('操作失败，已自动回滚: ') + (res.message || '')), 'danger');
 									ev.target.disabled = false;
 								}
 							});
 						}
-					}, _('切换')),
+					}, (isCur && !isRunning) ? _('▶ 启动服务') : _('切换')),
 
 					// 2. Single Probe
 					E('button', {
@@ -546,6 +1032,9 @@ return view.extend({
 		var fixedSelect = E('select', { 'class': 'cbi-input-select' });
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
 		var curFixed = nodesData ? nodesData.fixed_proxy_id : null;
+		if ((!curFixed || nodes.length <= 1) && nodes.length > 0) {
+			curFixed = nodes[0].id;
+		}
 		if (nodes.length === 0) {
 			fixedSelect.appendChild(E('option', { 'value': '' }, _('暂无可用节点')));
 		} else {
@@ -636,7 +1125,9 @@ return view.extend({
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, _('xc 节点切换与分流管理器')),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
+			this.renderMissingAlert(status),
 			this.renderStatusHeader(status, nodesData),
+			this.renderCoreAssetsSection(status),
 			this.renderNodeTable(status, nodesData, settingsData),
 			this.renderSettingsSection(nodesData, settingsData)
 		]);

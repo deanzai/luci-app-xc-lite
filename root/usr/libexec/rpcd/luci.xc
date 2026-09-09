@@ -106,6 +106,20 @@ local methods = {
             table.insert(data.nodes, node)
         end
 
+        -- 若当前仅有 1 个节点（唯一节点），或尚未配置有效的固定分流节点，自动将固定分流节点初始化为此节点
+        local has_valid_fixed = false
+        if data.fixed_proxy_id then
+            for _, n in ipairs(data.nodes) do
+                if tonumber(n.id) == tonumber(data.fixed_proxy_id) then
+                    has_valid_fixed = true
+                    break
+                end
+            end
+        end
+        if #data.nodes <= 1 or not has_valid_fixed then
+            data.fixed_proxy_id = tonumber(node.id)
+        end
+
         local ok_write = write_file(NODES_FILE, json.stringify(data, 1))
         output_json({ code = ok_write and 0 or 1, message = ok_write and "success" or "failed to write nodes.json" })
     end,
@@ -130,16 +144,39 @@ local methods = {
             end
         end
         data.nodes = new_nodes
+
+        -- 若被删除的节点是固定分流节点，或删除后只剩 1 个节点，自动重置固定分流节点
+        if tonumber(data.fixed_proxy_id) == id or #data.nodes <= 1 then
+            data.fixed_proxy_id = (#data.nodes > 0) and tonumber(data.nodes[1].id) or nil
+        end
+
         local ok_write = write_file(NODES_FILE, json.stringify(data, 1))
         output_json({ code = ok_write and 0 or 1, message = ok_write and "deleted" or "failed to write nodes.json" })
     end,
 
-    rollback = function()
-        local tmp_log = "/tmp/xc-rollback.log"
-        local ret = os.execute("/usr/bin/xc rollback >" .. tmp_log .. " 2>&1")
-        local out = read_file(tmp_log) or ""
-        os.remove(tmp_log)
-        output_json({ code = (ret == 0) and 0 or 1, message = out })
+    switch_source = function(params)
+        local raw = read_file(SETTINGS_FILE)
+        local ok, data = pcall(json.parse, raw or "")
+        if not ok or type(data) ~= "table" then data = {} end
+
+        if params and params.core_source then
+            data.core_source = tostring(params.core_source)
+        end
+        if params and params.asset_source then
+            data.asset_source = tostring(params.asset_source)
+        end
+
+        local ok_write = write_file(SETTINGS_FILE, json.stringify(data, 1))
+
+        -- 若服务正在运行，自动重启以使核心或规则源切换生效
+        local p = io.popen("pgrep -f 'xray run -c /etc/xc/config.json'")
+        local pid = p and p:read("*l")
+        if p then p:close() end
+        if pid then
+            os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+        end
+
+        output_json({ code = ok_write and 0 or 1, message = ok_write and "source_updated" or "failed to write settings" })
     end,
 
     test_health = function()
@@ -161,7 +198,9 @@ local methods = {
             http_port = 10809,
             proxy_host = "127.0.0.1",
             probe_url = "http://www.gstatic.com/generate_204",
-            health_url = "http://www.gstatic.com/generate_204"
+            health_url = "http://www.gstatic.com/generate_204",
+            core_source = "custom",
+            asset_source = "custom"
         }
         if ok and type(data) == "table" then
             for k, v in pairs(defaults) do
@@ -198,13 +237,26 @@ local methods = {
         end
 
         output_json({ code = ok_write and 0 or 1, message = ok_write and "saved" or "save error" })
+    end,
+
+    restart_service = function()
+        local tmp_log = "/tmp/xc-restart.log"
+        local ret = os.execute("/usr/bin/xc restart >" .. tmp_log .. " 2>&1")
+        local out = read_file(tmp_log) or ""
+        os.remove(tmp_log)
+        output_json({ code = (ret == 0) and 0 or 1, message = out })
+    end,
+
+    stop_service = function()
+        local ret = os.execute("/usr/bin/xc stop >/dev/null 2>&1")
+        output_json({ code = (ret == 0) and 0 or 1, message = (ret == 0) and "stopped" or "stop_failed" })
     end
 }
 
 -- rpcd Dispatcher
 local action = arg[1]
 if action == "list" then
-    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"rollback":{},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0}}\n')
+    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"switch_source":{"core_source":"","asset_source":""},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0},"restart_service":{},"stop_service":{}}\n')
 elseif action == "call" then
     local method = arg[2]
     local fn = methods[method]
