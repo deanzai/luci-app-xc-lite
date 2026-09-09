@@ -16,6 +16,7 @@ router-*.json
 deploy-local.*
 github_token.txt
 login_message*.txt
+remote_*.txt
 tests/remote_server_*.txt
 tests/deploy_to_*.sh
 local.txt
