@@ -183,7 +183,9 @@ function act_upload(target_type)
         if f then f:close() end
 
         local lower_name = (uploaded_filename or ""):lower()
-        if (header == "\127ELF" and stat.size >= 1024 * 1024) or (header:sub(1, 2) == "\031\139" and (lower_name:find("xray") or lower_name:find("tar.gz") or lower_name:find("tgz"))) then
+        if (header == "\127ELF" and stat.size >= 1024 * 1024) 
+           or (header:sub(1, 2) == "\031\139" and (lower_name:find("xray") or lower_name:find("tar.gz") or lower_name:find("tgz")))
+           or (header == "PK\03\04" and (lower_name:find("xray") or lower_name:find("zip"))) then
             upload_type = "xray"
         elseif lower_name:find("geosite") or (lower_name:match("%.dat$") and lower_name:find("site")) then
             upload_type = "geosite"
@@ -212,22 +214,31 @@ function act_upload(target_type)
         local is_gzip = (header:sub(1, 2) == "\031\139")
         local is_elf = (header == "\127ELF")
 
-        if is_zip then
-            os.remove(tmp_file)
-            luci.http.write('{"code":1,"message":"格式提示：您上传的是 ZIP 压缩包。OpenWrt 系统缺少 unzip 工具，请在电脑上解压直接上传 xray 程序，或打包为 .tar.gz 格式上传"}')
-            return
-        end
-
-        if is_gzip then
+        if is_zip or is_gzip then
             local extract_dir = "/tmp/xc_extract_" .. os.time()
             fs.mkdirr(extract_dir)
-            local tar_cmd = string.format("tar -xzf %s -C %s 2>&1", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
-            local tar_ret = os.execute(tar_cmd)
+            local unpack_cmd = nil
+            local archive_type = is_zip and "zip" or "tar.gz"
+
+            if is_zip then
+                local check_unzip = os.execute("which unzip >/dev/null 2>&1")
+                if check_unzip ~= 0 then
+                    os.remove(tmp_file)
+                    os.execute(string.format("rm -rf %s", luci.util.shellquote(extract_dir)))
+                    luci.http.write('{"code":1,"message":"解压工具缺失：系统未安装 unzip 工具。请先在路由器安装 unzip (opkg install unzip) 或使用 tar.gz / 二进制核心上传"}')
+                    return
+                end
+                unpack_cmd = string.format("unzip -q -o %s -d %s 2>&1", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
+            else
+                unpack_cmd = string.format("tar -xzf %s -C %s 2>&1", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
+            end
+
+            local unpack_ret = os.execute(unpack_cmd)
             os.remove(tmp_file)
 
-            if tar_ret ~= 0 then
+            if unpack_ret ~= 0 then
                 os.execute(string.format("rm -rf %s", luci.util.shellquote(extract_dir)))
-                luci.http.write('{"code":1,"message":"压缩包异常：tar.gz 自动解压失败，请确认压缩包是否损坏"}')
+                luci.http.write(string.format('{"code":1,"message":"压缩包异常：%s 自动解压失败，请确认压缩包是否损坏或带有密码"}', archive_type))
                 return
             end
 
@@ -279,15 +290,15 @@ function act_upload(target_type)
                 return
             end
 
-            os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core from tar.gz: " .. ver_str))
+            os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core from " .. archive_type .. ": " .. ver_str))
             silent_rpcd("switch_source", '{"core_source":"custom"}')
-            luci.http.write(string.format('{"code":0,"message":"Xray 压缩包已自动解压并成功激活为自定义核心！(%s)"}', ver_str))
+            luci.http.write(string.format('{"code":0,"message":"Xray %s 压缩包已自动解压并成功激活为自定义核心！(%s)"}', archive_type:upper(), ver_str))
             return
         end
 
         if not is_elf then
             os.remove(tmp_file)
-            luci.http.write('{"code":1,"message":"格式错误：不是合法的 Linux ELF 二进制可执行文件或 tar.gz 压缩包"}')
+            luci.http.write('{"code":1,"message":"格式错误：不是合法的 Linux ELF 二进制可执行文件或 .zip / .tar.gz 压缩包"}')
             return
         end
 

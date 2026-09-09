@@ -73,18 +73,33 @@ assert(auto_detect_type(nil, "geosite.dat", valid_dat) == "geosite", "should aut
 assert(auto_detect_type(nil, "geoip.dat", valid_dat) == "geoip", "should auto-detect geoip.dat without type parameter")
 assert(auto_detect_type("GEOIP", "custom.dat", valid_dat:lower()) == nil or auto_detect_type("geoip", "custom.dat", valid_dat) == "geoip", "explicit type takes precedence")
 
-print("[TEST UPLOAD 6] tar.gz auto-detection and archive validation...")
+print("[TEST UPLOAD 6] tar.gz and zip auto-detection and archive validation...")
 local gzip_magic = "\031\139" .. string.rep("G", 100)
+local zip_magic = "PK\03\04" .. string.rep("Z", 100)
 local function is_archive_supported(magic, filename)
     local is_gzip = (magic:sub(1, 2) == "\031\139")
     local is_zip = (magic:sub(1, 4) == "PK\03\04")
     if is_gzip then return true, "tar.gz" end
-    if is_zip then return false, "zip_not_supported" end
+    if is_zip then return true, "zip" end
     return false, "unknown"
 end
 local ok_gz, type_gz = is_archive_supported(gzip_magic, "Xray-linux-arm64.tar.gz")
 assert(ok_gz and type_gz == "tar.gz", "tar.gz should be supported")
-local ok_zip, type_zip = is_archive_supported("PK\03\04dummy", "Xray.zip")
-assert(not ok_zip and type_zip == "zip_not_supported", "zip should prompt user to unpack or use tar.gz")
+local ok_zip, type_zip = is_archive_supported(zip_magic, "Xray-linux-arm64-v8a.zip")
+assert(ok_zip and type_zip == "zip", "zip should now be fully supported")
+
+local function auto_detect_type_v2(explicit_type, filename, data)
+    if explicit_type then return explicit_type end
+    local lower = (filename or ""):lower()
+    local header = data:sub(1, 4)
+    if (header == "\127ELF" and #data >= 1024 * 1024)
+       or (header:sub(1, 2) == "\031\139" and (lower:find("xray") or lower:find("tar.gz") or lower:find("tgz")))
+       or (header == "PK\03\04" and (lower:find("xray") or lower:find("zip"))) then
+        return "xray"
+    end
+    return nil
+end
+assert(auto_detect_type_v2(nil, "Xray-linux-arm64-v8a.zip", zip_magic) == "xray", "should auto-detect xray zip archive")
+assert(auto_detect_type_v2(nil, "core.zip", zip_magic) == "xray", "should auto-detect zip as core candidate")
 
 print("ALL UPLOAD VALIDATION TESTS PASSED!")

@@ -78,7 +78,7 @@
     <fieldset class="cbi-section">
         <legend><%=translate("核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)")%></legend>
         <div class="cbi-section-descr" style="margin-bottom:10px; font-size:12px; color:#666;">
-            <%=translate("支持网页直接上传 Xray 核心（支持 Linux ELF 或 tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。")%>
+            <%=translate("支持网页直接上传 Xray 核心（支持 Linux ELF 或 .zip / .tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。")%>
         </div>
         <div class="cbi-section-node">
             <table class="table cbi-section-table" id="xc-assets-table">
@@ -94,7 +94,7 @@
                         <td class="td"><strong><%=translate("Xray 核心程序 (xray)")%></strong></td>
                         <td class="td">
                             <div id="asset-xray-path" style="font-family:monospace; font-size:12px; color:#666;">-</div>
-                            <div style="font-size:11px; color:#888;"><%=translate("支持上传 Linux ELF 程序或 .tar.gz 压缩包（自动解压并校验）")%></div>
+                            <div style="font-size:11px; color:#888;"><%=translate("支持上传 Linux ELF 程序或 .zip / .tar.gz 压缩包（自动解压并校验）")%></div>
                         </td>
                         <td class="td cbi-section-actions" style="text-align:right;">
                             <span id="asset-xray-switch-slot"></span>

@@ -439,7 +439,7 @@ return view.extend({
 			{
 				key: 'xray',
 				title: _('Xray 核心程序 (xray)'),
-				desc: _('支持 Linux ELF 程序或 .tar.gz 压缩包上传（自动解压并校验），内置核心自动保底'),
+				desc: _('支持 Linux ELF 程序或 .zip / .tar.gz 压缩包上传（自动解压并校验），内置核心自动保底'),
 				ok: cs.xray_ok,
 				path: cs.xray_path || _('未找到 (/etc/xc/bin/xray, /usr/bin/xray)'),
 				badgeText: xrayModeText,
@@ -513,7 +513,7 @@ return view.extend({
 
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)')),
-			E('div', { 'class': 'cbi-section-descr' }, _('支持网页直接上传 Xray 核心（支持 Linux ELF 或 tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。')),
+			E('div', { 'class': 'cbi-section-descr' }, _('支持网页直接上传 Xray 核心（支持 Linux ELF 或 .zip / .tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。')),
 			E('div', { 'class': 'cbi-section-node' }, [ table ])
 		]);
 	},
