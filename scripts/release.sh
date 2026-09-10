@@ -60,15 +60,17 @@ fi
 IPK_NAME=$(basename "$IPK_PATH")
 echo -e "${GREEN}✓ 最新安装包已就绪: ${BOLD}${IPK_NAME}${NC}"
 
+SSH_OPTS="-o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa"
+
 # ------------------------------------------------------------------------------
 # 步骤 3: 仅预发布部署至 Staging 预发布机
 # ------------------------------------------------------------------------------
 step "3/5" "单机灰度预发布至 Staging 验证机 (${STAGING_ROUTER})"
 echo "推送 ${IPK_NAME} 到 ${STAGING_ROUTER}:/tmp/ ..."
-sshpass -p "$ROUTER_PASS" scp -o StrictHostKeyChecking=no "$IPK_PATH" "root@${STAGING_ROUTER}:/tmp/"
+sshpass -p "$ROUTER_PASS" scp $SSH_OPTS "$IPK_PATH" "root@${STAGING_ROUTER}:/tmp/"
 
 echo "在 ${STAGING_ROUTER} 执行强制重装并刷新服务..."
-sshpass -p "$ROUTER_PASS" ssh -o StrictHostKeyChecking=no "root@${STAGING_ROUTER}" \
+sshpass -p "$ROUTER_PASS" ssh $SSH_OPTS "root@${STAGING_ROUTER}" \
     "opkg install --force-reinstall /tmp/${IPK_NAME} && rm -rf /tmp/luci-indexcache /tmp/luci-modulecache* && /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart"
 echo -e "${GREEN}✓ Staging 路由器 ${STAGING_ROUTER} 部署安装完毕。${NC}"
 
@@ -90,20 +92,15 @@ fi
 step "5/5" "全量同步部署至生产环境路由器 (${PROD_ROUTERS[*]})"
 for router in "${PROD_ROUTERS[@]}"; do
     echo -e "\n  ${YELLOW}--> 同步发布至生产机: ${router}${NC}"
-    ssh_opts="-o StrictHostKeyChecking=no"
-    if [ "$router" = "192.168.93.94" ]; then
-        ssh_opts="$ssh_opts -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa"
-    fi
-
     echo "      推送 ${IPK_NAME} ..."
-    sshpass -p "$ROUTER_PASS" scp $ssh_opts "$IPK_PATH" "root@${router}:/tmp/"
+    sshpass -p "$ROUTER_PASS" scp $SSH_OPTS "$IPK_PATH" "root@${router}:/tmp/"
 
     echo "      执行安装并刷新缓存..."
-    sshpass -p "$ROUTER_PASS" ssh $ssh_opts "root@${router}" \
+    sshpass -p "$ROUTER_PASS" ssh $SSH_OPTS "root@${router}" \
         "opkg install --force-reinstall /tmp/${IPK_NAME} && rm -rf /tmp/luci-indexcache /tmp/luci-modulecache* && /etc/init.d/rpcd restart && /etc/init.d/uhttpd restart"
 
     echo "      验证生产机 ${router} 控制器序列化与 index 就绪..."
-    sshpass -p "$ROUTER_PASS" ssh $ssh_opts "root@${router}" \
+    sshpass -p "$ROUTER_PASS" ssh $SSH_OPTS "root@${router}" \
         "lua -e 'local c = require \"luci.controller.xc\"; local f = loadstring(string.dump(c.index)); local scope = setmetatable({}, {__index = {entry = function() return {} end, template = function() return function() end end, call = function() return function() end end, _ = function(s) return s end, require = require}}); setfenv(f, scope); f()'"
     echo -e "      ${GREEN}✓ 生产机 ${router} 同步发布与质量验证完成${NC}"
 done

@@ -22,7 +22,7 @@ find "$BUILD_DIR/data" -type f \( -name "*.lua" -o -name "*.htm" -o -name "*.js"
 # 设置可执行权限
 chmod 0755 "$BUILD_DIR/data/usr/bin/xc"
 chmod 0755 "$BUILD_DIR/data/usr/libexec/rpcd/luci.xc"
-chmod 0755 "$BUILD_DIR/data/etc/init.d/xc-xray"
+chmod 0755 "$BUILD_DIR/data/etc/init.d/xc"
 chmod 0755 "$BUILD_DIR/data/etc/uci-defaults/80_luci-app-xc"
 
 # 获取版本号
@@ -48,16 +48,26 @@ EOF
 cat > "$BUILD_DIR/control/postinst" << 'EOF'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] || {
-    mkdir -p /etc/xc/bin /etc/xc/assets /usr/share/xray 2>/dev/null
+    mkdir -p /etc/xc/bin /etc/xc/assets /var/etc/xc /usr/share/xray 2>/dev/null
     [ -f /usr/share/xray/geosite.dat ] || ln -sf /root/xray/geosite.dat /usr/share/xray/geosite.dat 2>/dev/null
     [ -f /usr/share/xray/geoip.dat ] || ln -sf /root/xray/geoip.dat /usr/share/xray/geoip.dat 2>/dev/null
-    chmod +x /usr/bin/xc /usr/libexec/rpcd/luci.xc /etc/init.d/xc-xray /etc/uci-defaults/80_luci-app-xc 2>/dev/null
+    chmod +x /usr/bin/xc /usr/libexec/rpcd/luci.xc /etc/init.d/xc /etc/uci-defaults/80_luci-app-xc 2>/dev/null
+
+    # 触发从 JSON 向 UCI 的平滑数据迁移
+    [ -x /usr/bin/xc ] && /usr/bin/xc migrate >/dev/null 2>&1 || true
+
     rm -rf /tmp/luci-indexcache /tmp/luci-modulecache* 2>/dev/null
     /etc/init.d/rpcd restart 2>/dev/null
     /etc/init.d/uhttpd restart 2>/dev/null
-    /etc/init.d/xc-xray enable 2>/dev/null
-    if [ -s /etc/xc/config.json ]; then
-        /etc/init.d/xc-xray restart 2>/dev/null || true
+    # 优雅清理与迁移旧版 xc-xray 服务
+    if [ -x /etc/init.d/xc-xray ]; then
+        /etc/init.d/xc-xray stop 2>/dev/null || true
+        /etc/init.d/xc-xray disable 2>/dev/null || true
+        rm -f /etc/init.d/xc-xray 2>/dev/null || true
+    fi
+    /etc/init.d/xc enable 2>/dev/null
+    if [ -s /var/etc/xc/config.json ] || [ -s /etc/xc/config.json ]; then
+        /etc/init.d/xc restart 2>/dev/null || true
     fi
 }
 exit 0
@@ -68,8 +78,12 @@ chmod 0755 "$BUILD_DIR/control/postinst"
 cat > "$BUILD_DIR/control/prerm" << 'EOF'
 #!/bin/sh
 [ -n "${IPKG_INSTROOT}" ] || {
-    /etc/init.d/xc-xray stop 2>/dev/null
-    /etc/init.d/xc-xray disable 2>/dev/null
+    /etc/init.d/xc stop 2>/dev/null
+    /etc/init.d/xc disable 2>/dev/null
+    if [ -x /etc/init.d/xc-xray ]; then
+        /etc/init.d/xc-xray stop 2>/dev/null
+        /etc/init.d/xc-xray disable 2>/dev/null
+    fi
 }
 exit 0
 EOF

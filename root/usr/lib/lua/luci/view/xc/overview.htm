@@ -51,7 +51,7 @@
 </style>
 
 <div class="cbi-map">
-    <h2 name="content"><%=translate("xc 节点切换与分流管理器")%></h2>
+    <h2 name="content"><%=translate("xc 节点切换与分流管理器")%> <span class="xc-badge xc-badge-info" id="xc-app-version" style="font-size:12px; vertical-align:middle; margin-left:8px;">v1.0.15-1</span></h2>
     <div class="cbi-map-descr">
         <%=translate("轻量级 Xray 节点切换与双协议分流管理面板，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、手动平滑切换与失败回滚。")%>
     </div>
@@ -69,6 +69,12 @@
     <fieldset class="cbi-section">
         <legend><%=translate("运行状态与分流概览")%></legend>
         <div class="cbi-section-node">
+            <div class="cbi-value">
+                <label class="cbi-value-title"><%=translate("插件版本")%></label>
+                <div class="cbi-value-field">
+                    <span id="stat-app-version" style="font-weight:bold; color:#4b5563;">v1.0.15-1</span>
+                </div>
+            </div>
             <div class="cbi-value">
                 <label class="cbi-value-title"><%=translate("服务运行状态")%></label>
                 <div class="cbi-value-field">
@@ -237,11 +243,25 @@
                         <div class="cbi-value-description"><%=translate("固定承担 OpenAI, YouTube, Google 等 geosite 访问的节点。")%></div>
                     </div>
                 </div>
+                <!-- Xray 日志级别单独设定 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><%=translate("Xray 系统日志级别 (log_level)")%></label>
+                    <div class="cbi-value-field">
+                        <select id="setting-log-level" class="cbi-input-select" style="width:280px;">
+                            <option value="none"><%=translate("none (静默无日志)")%></option>
+                            <option value="error"><%=translate("error (仅记录错误)")%></option>
+                            <option value="warning" selected><%=translate("warning (默认推荐：静默连接流水，仅告警)")%></option>
+                            <option value="info"><%=translate("info (排查推荐：记录详细连接与路由分流)")%></option>
+                            <option value="debug"><%=translate("debug (全量内部调试)")%></option>
+                        </select>
+                        <div class="cbi-value-description"><%=translate("选择 warning/error/none 时将自动静默每笔请求连接日志 (from ... accepted ...)，防止系统日志刷屏；选择 info 时将记录详细连接请求来源与分流走向。保存后系统将自动平滑重载 Xray 核心生效。")%></div>
+                    </div>
+                </div>
                 <div class="cbi-value">
                     <label class="cbi-value-title"></label>
                     <div class="cbi-value-field">
                         <button type="submit" class="cbi-button cbi-button-save"><%=translate("保存并应用全局设置")%></button>
-                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存生效")%></span>
+                        <span id="settings-tip" style="margin-left:10px; color:#10b981;" class="xc-hidden"><%=translate("✓ 设置已保存，Xray 核心已平滑重载生效！")%></span>
                     </div>
                 </div>
             </div>
@@ -647,6 +667,12 @@ function renderStatus() {
     var sHost = st.socks_host || (appData.settings && appData.settings.socks_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
     var hHost = st.http_host || (appData.settings && appData.settings.http_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
 
+    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.15-1";
+    var elBadge = document.getElementById("xc-app-version");
+    if (elBadge) elBadge.innerText = "v" + appVer.replace(/^v/, "");
+    var elStatVer = document.getElementById("stat-app-version");
+    if (elStatVer) elStatVer.innerText = "v" + appVer.replace(/^v/, "");
+
     var socks = st.socks_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
     var http = st.http_listening ? "<span style='color:#10b981;'><%=translate('正常监听')%></span>" : "<span style='color:#ef4444;'><%=translate('未监听')%></span>";
     document.getElementById("stat-ports-info").innerHTML = "SOCKS5: <strong>" + sHost + ":" + sPort + "</strong> (" + socks + ") | HTTP: <strong>" + hHost + ":" + hPort + "</strong> (" + http + ") | DoH: 1.1.1.1 (<%=translate('防泄露')%>)";
@@ -948,6 +974,11 @@ function renderSettings() {
     document.getElementById("setting-health-url").value = s.health_url || "http://www.gstatic.com/generate_204";
     document.getElementById("setting-probe-timeout").value = s.probe_timeout || 5;
     document.getElementById("setting-probe-concurrency").value = s.probe_concurrency || 3;
+
+    var elLogLevel = document.getElementById("setting-log-level");
+    if (elLogLevel) {
+        elLogLevel.value = s.log_level || "warning";
+    }
 
     var sel = document.getElementById("setting-fixed-id");
     sel.innerHTML = "";
@@ -1268,6 +1299,7 @@ function doSaveSettings(ev) {
             socks_port: Number(document.getElementById("setting-socks-port").value.trim()),
             http_host: document.getElementById("setting-http-host").value.trim(),
             http_port: Number(document.getElementById("setting-http-port").value.trim()),
+            log_level: (document.getElementById("setting-log-level") ? document.getElementById("setting-log-level").value : "warning"),
             proxy_host: document.getElementById("setting-proxy-host").value.trim(),
             probe_url: document.getElementById("setting-probe-url").value.trim(),
             health_url: document.getElementById("setting-health-url").value.trim(),

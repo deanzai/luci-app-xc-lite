@@ -1,8 +1,12 @@
 #!/bin/sh
 
-[ -d /etc/xc ] || mkdir -p /etc/xc
-[ -f /etc/xc/settings.json ] || cp /etc/xc/settings.example.json /etc/xc/settings.json 2>/dev/null
-[ -f /etc/xc/nodes.json ] || echo '{"version":1,"fixed_proxy_id":null,"nodes":[]}' > /etc/xc/nodes.json
-chmod +x /usr/bin/xc /usr/libexec/rpcd/luci.xc /etc/init.d/xc-xray 2>/dev/null
+[ -n "${IPKG_INSTROOT}" ] || {
+	[ -d /etc/xc ] || mkdir -p /etc/xc
+	[ -d /var/etc/xc ] || mkdir -p /var/etc/xc
+	chmod +x /usr/bin/xc /usr/libexec/rpcd/luci.xc /etc/init.d/xc 2>/dev/null
+
+	# 触发向 UCI 的自动平滑数据迁移
+	[ -x /usr/bin/xc ] && /usr/bin/xc migrate >/dev/null 2>&1 || true
+}
 
 exit 0

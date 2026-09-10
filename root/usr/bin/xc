@@ -1,22 +1,33 @@
 #!/usr/bin/lua
 local json = require "luci.jsonc"
 
+local ok_uci, uci_mod = pcall(require, "uci")
+local uci_cursor = ok_uci and uci_mod.cursor() or nil
+
 local ROOT = "/etc/xc"
+local VAR_DIR = "/var/etc/xc"
 local BIN_DIR = ROOT .. "/bin"
 local ASSET_DIR = ROOT .. "/assets"
 local CUSTOM_XRAY = BIN_DIR .. "/xray"
 local SYSTEM_XRAY = "/usr/bin/xray"
 local NODES_FILE = ROOT .. "/nodes.json"
-local CONFIG_FILE = ROOT .. "/config.json"
-local CURRENT_FILE = ROOT .. "/current"
-local PREV_CONFIG = ROOT .. "/config.previous"
-local PREV_CURRENT = ROOT .. "/current.previous"
 local SETTINGS_FILE = ROOT .. "/settings.json"
+
+-- 动态配置落盘在 tmpfs 内存盘，避免 Flash 擦写磨损
+local CONFIG_FILE = VAR_DIR .. "/config.json"
+local COMPAT_CONFIG = ROOT .. "/config.json"
+local CURRENT_FILE = VAR_DIR .. "/current"
+local COMPAT_CURRENT = ROOT .. "/current"
+local PREV_CONFIG = VAR_DIR .. "/config.previous"
+local PREV_CURRENT = VAR_DIR .. "/current.previous"
+
+local APP_VERSION = "1.0.15-1"
+
 local DEFAULT_SETTINGS = {
-    listen_host = "127.0.0.1",
-    socks_host = "127.0.0.1",
+    listen_host = "0.0.0.0",
+    socks_host = "0.0.0.0",
     socks_port = 7890,
-    http_host = "127.0.0.1",
+    http_host = "0.0.0.0",
     http_port = 10809,
     proxy_host = "127.0.0.1",
     probe_url = "http://www.gstatic.com/generate_204",
@@ -24,7 +35,8 @@ local DEFAULT_SETTINGS = {
     probe_timeout = 5,
     probe_concurrency = 3,
     core_source = "custom",
-    asset_source = "custom"
+    asset_source = "custom",
+    log_level = "warning"
 }
 
 local function file_exists(path)
@@ -105,7 +117,89 @@ local function write(path, data)
     f:close()
 end
 
+local function ensure_runtime_dirs()
+    if not file_exists(VAR_DIR) then
+        os.execute("mkdir -p " .. shell_quote(VAR_DIR))
+    end
+end
+
+local function migrate_to_uci()
+    if not uci_cursor then return false end
+    local committed = false
+
+    local s_raw = read(SETTINGS_FILE)
+    if s_raw then
+        local s_ok, s_data = pcall(json.parse, s_raw)
+        if s_ok and type(s_data) == "table" then
+            for k, v in pairs(s_data) do
+                if v ~= nil and uci_cursor:get("xc", "main", k) == nil then
+                    uci_cursor:set("xc", "main", k, tostring(v))
+                    committed = true
+                end
+            end
+        end
+    end
+
+    local n_raw = read(NODES_FILE)
+    if n_raw then
+        local n_ok, n_data = pcall(json.parse, n_raw)
+        if n_ok and type(n_data) == "table" then
+            if n_data.fixed_proxy_id and uci_cursor:get("xc", "main", "fixed_proxy_id") == nil then
+                uci_cursor:set("xc", "main", "fixed_proxy_id", tostring(n_data.fixed_proxy_id))
+                committed = true
+            end
+            if type(n_data.nodes) == "table" then
+                for _, node in ipairs(n_data.nodes) do
+                    if node.id then
+                        local sec_name = "node_" .. tostring(node.id)
+                        if not uci_cursor:get_all("xc", sec_name) and not uci_cursor:get_all("xc", tostring(node.id)) then
+                            uci_cursor:set("xc", sec_name, "node")
+                            for nk, nv in pairs(node) do
+                                if nv ~= nil then
+                                    uci_cursor:set("xc", sec_name, nk, tostring(nv))
+                                end
+                            end
+                            committed = true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    local cur_raw = read(CURRENT_FILE) or read(COMPAT_CURRENT)
+    if cur_raw then
+        local cid = cur_raw:match("%d+")
+        if cid and uci_cursor:get("xc", "main", "current_id") == nil then
+            uci_cursor:set("xc", "main", "current_id", tostring(cid))
+            committed = true
+        end
+    end
+
+    if committed then
+        pcall(uci_cursor.commit, uci_cursor, "xc")
+    end
+
+    ensure_runtime_dirs()
+    if file_exists(COMPAT_CONFIG) and not file_exists(CONFIG_FILE) then
+        os.execute("cp -f " .. shell_quote(COMPAT_CONFIG) .. " " .. shell_quote(CONFIG_FILE) .. " 2>/dev/null")
+    end
+    if not file_exists(COMPAT_CONFIG) and file_exists(CONFIG_FILE) then
+        os.execute("ln -sf " .. shell_quote(CONFIG_FILE) .. " " .. shell_quote(COMPAT_CONFIG) .. " 2>/dev/null")
+    end
+    return true
+end
+
 local function setting(name)
+    if uci_cursor then
+        local val = uci_cursor:get("xc", "main", name)
+        if val ~= nil then
+            if type(DEFAULT_SETTINGS[name]) == "number" then
+                return tonumber(val) or DEFAULT_SETTINGS[name]
+            end
+            return val
+        end
+    end
     local raw = read(SETTINGS_FILE)
     if not raw then return DEFAULT_SETTINGS[name] end
     local ok, data = pcall(json.parse, raw)
@@ -199,28 +293,6 @@ local function xray_command(args, st)
     return prefix .. shell_quote(bin) .. " " .. args
 end
 
-local function read(path)
-    local f = io.open(path, "r")
-    if not f then return nil end
-    local data = f:read("*a")
-    f:close()
-    return data
-end
-
-local function write(path, data)
-    local f = assert(io.open(path, "w"))
-    f:write(data)
-    f:close()
-end
-
-local function setting(name)
-    local raw = read(SETTINGS_FILE)
-    if not raw then return DEFAULT_SETTINGS[name] end
-    local ok, data = pcall(json.parse, raw)
-    if ok and data and data[name] ~= nil then return data[name] end
-    return DEFAULT_SETTINGS[name]
-end
-
 local function run(command)
     return os.execute(command) == 0
 end
@@ -230,11 +302,11 @@ local function sleep(seconds)
 end
 
 local function check_port_listening(port)
-    local p = io.popen("netstat -lnt 2>/dev/null | grep '" .. tostring(port) .. " '")
+    local p = io.popen("netstat -lnt 2>/dev/null")
     if not p then return false end
-    local line = p:read("*l")
+    local out = p:read("*a") or ""
     p:close()
-    return line ~= nil
+    return out:match(":" .. tostring(port) .. "%s") ~= nil
 end
 
 local function wait_for_listener(port)
@@ -281,8 +353,27 @@ local function wait_for_probe_listener(port)
     end
 end
 
-
 local function nodes_data()
+    if uci_cursor then
+        migrate_to_uci()
+        local nodes = {}
+        uci_cursor:foreach("xc", "node", function(s)
+            local n = {}
+            for k, v in pairs(s) do
+                if k:sub(1, 1) ~= "." then
+                    n[k] = (k == "id" or k == "port") and tonumber(v) or v
+                end
+            end
+            if n.id then table.insert(nodes, n) end
+        end)
+        table.sort(nodes, function(a, b) return (a.id or 0) < (b.id or 0) end)
+        local fixed_id = tonumber(uci_cursor:get("xc", "main", "fixed_proxy_id"))
+        if not fixed_id and #nodes > 0 then
+            fixed_id = nodes[1].id
+        end
+        return { version = 1, fixed_proxy_id = fixed_id or 1, nodes = nodes }
+    end
+
     local raw = read(NODES_FILE)
     if not raw then
         return { version = 1, fixed_proxy_id = 1, nodes = {} }
@@ -354,7 +445,7 @@ end
 
 local function make_probe_config(node, socks_port)
     return {
-        log = { loglevel = "none" },
+        log = { access = "none", loglevel = "none" },
         inbounds = {
             {
                 tag = "probe-in",
@@ -377,10 +468,18 @@ local function make_config(node, socks_port, http_port)
     local s_port = tonumber(socks_port or setting("socks_port") or 7890)
     local h_host = setting("http_host") or setting("listen_host")
     local h_port = tonumber(http_port or setting("http_port") or 10809)
+    local l_lvl = setting("log_level") or "warning"
+    local l_access = "none"
+    if l_lvl == "info" or l_lvl == "debug" then
+        l_access = ""
+    end
     local selected = make_outbound(node, "proxy-selected")
     local fixed = make_outbound(node._fixed_proxy or node, "proxy")
     return {
-        log = {loglevel = "warning"},
+        log = {
+            access = l_access,
+            loglevel = l_lvl
+        },
         dns = {
             servers = {{
                 address = "https://1.1.1.1/dns-query",
@@ -441,7 +540,11 @@ local function make_config_for(nodes, node, socks_port, http_port)
 end
 
 local function current_id()
-    local raw = read(CURRENT_FILE)
+    if uci_cursor then
+        local cid = uci_cursor:get("xc", "main", "current_id")
+        if cid and tonumber(cid) then return tonumber(cid) end
+    end
+    local raw = read(CURRENT_FILE) or read(COMPAT_CURRENT)
     return raw and tonumber(raw:match("%d+")) or nil
 end
 
@@ -463,7 +566,7 @@ local function probe(node, port, timeout_sec)
 
     -- 智能通道复用：若为当前运行的活动节点，直接使用现有 SOCKS 代理测速
     local cur_id = current_id()
-    local p = io.popen("pgrep -f 'xray run -c /etc/xc/config.json'")
+    local p = io.popen("pgrep -f 'xray run -c'")
     local main_pid = p and p:read("*l")
     if p then p:close() end
 
@@ -543,6 +646,7 @@ local function list_nodes(data)
 end
 
 local function select_node(id)
+    ensure_runtime_dirs()
     local ready, err_msg, st = ensure_core_files()
     if not ready then
         return false, err_msg
@@ -560,14 +664,19 @@ local function select_node(id)
     local need_update_fixed = (nodes_count <= 1) or (not fixed_node)
     if need_update_fixed then
         data.fixed_proxy_id = tonumber(id)
+        if uci_cursor then
+            uci_cursor:set("xc", "main", "fixed_proxy_id", tostring(id))
+            pcall(uci_cursor.commit, uci_cursor, "xc")
+        end
         write(NODES_FILE, json.stringify(data, 1))
     end
 
-    local config = ROOT .. "/config.new.json"
+    local config = VAR_DIR .. "/config.new.json"
     write(config, json.stringify(make_config_for(data, node), 1))
     if not run(xray_command("run -test -c " .. shell_quote(config) .. " >/tmp/xc-test.log 2>&1", st)) then
         local err = read("/tmp/xc-test.log") or "xray configuration test failed"
         io.stderr:write(err)
+        os.remove(config)
         return false, err
     end
     os.execute("cp -f " .. shell_quote(CONFIG_FILE) .. " " .. shell_quote(PREV_CONFIG) .. " 2>/dev/null")
@@ -576,11 +685,20 @@ local function select_node(id)
         io.stderr:write("failed to replace active config\n")
         return false, "failed to replace active config"
     end
+    -- 维持向后兼容软链接
+    os.execute("ln -sf " .. shell_quote(CONFIG_FILE) .. " " .. shell_quote(COMPAT_CONFIG) .. " 2>/dev/null")
+    os.execute("ln -sf " .. shell_quote(CURRENT_FILE) .. " " .. shell_quote(COMPAT_CURRENT) .. " 2>/dev/null")
+
     write(CURRENT_FILE, tostring(id) .. "\n")
-    if not run("/etc/init.d/xc-xray restart >/dev/null 2>&1") then
+    if uci_cursor then
+        uci_cursor:set("xc", "main", "current_id", tostring(id))
+        pcall(uci_cursor.commit, uci_cursor, "xc")
+    end
+
+    if not run("/etc/init.d/xc restart >/dev/null 2>&1") then
         os.execute("cp -f " .. shell_quote(PREV_CONFIG) .. " " .. shell_quote(CONFIG_FILE))
         os.execute("cp -f " .. shell_quote(PREV_CURRENT) .. " " .. shell_quote(CURRENT_FILE))
-        os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+        os.execute("/etc/init.d/xc restart >/dev/null 2>&1")
         return false, "service restart failed"
     end
     local s_port = tonumber(setting("socks_port") or 7890)
@@ -596,7 +714,15 @@ local function select_node(id)
         if os.execute("test -s " .. shell_quote(PREV_CONFIG)) == 0 then
             os.execute("cp -f " .. shell_quote(PREV_CONFIG) .. " " .. shell_quote(CONFIG_FILE))
             os.execute("cp -f " .. shell_quote(PREV_CURRENT) .. " " .. shell_quote(CURRENT_FILE))
-            os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+            local prev_cid = read(CURRENT_FILE)
+            if prev_cid and uci_cursor then
+                local pid_val = prev_cid:match("%d+")
+                if pid_val then
+                    uci_cursor:set("xc", "main", "current_id", tostring(pid_val))
+                    pcall(uci_cursor.commit, uci_cursor, "xc")
+                end
+            end
+            os.execute("/etc/init.d/xc restart >/dev/null 2>&1")
         end
         io.stderr:write("health check failed; rolled back\n")
         return false, "health check failed; rolled back"
@@ -615,6 +741,11 @@ local function test_current()
 end
 
 local function set_source(c_src, a_src)
+    if uci_cursor then
+        if c_src then uci_cursor:set("xc", "main", "core_source", c_src) end
+        if a_src then uci_cursor:set("xc", "main", "asset_source", a_src) end
+        pcall(uci_cursor.commit, uci_cursor, "xc")
+    end
     local raw = read(SETTINGS_FILE)
     local ok, data = pcall(json.parse, raw or "")
     if not ok or type(data) ~= "table" then data = {} end
@@ -636,7 +767,7 @@ elseif command == "current" then
     local node = id and find_node(data, id)
     if node then io.write(string.format("%d [%s] %s\n", id, node.type, node.name)) else io.write("none\n") end
 elseif command == "status" then
-    local p = io.popen("pgrep -f 'xray run -c /etc/xc/config.json'")
+    local p = io.popen("pgrep -f 'xray run -c'")
     local pid = p and p:read("*l")
     if p then p:close() end
     local cur_id = current_id()
@@ -646,6 +777,7 @@ elseif command == "status" then
     local s_host = setting("socks_host") or setting("listen_host")
     local h_host = setting("http_host") or setting("listen_host")
     local status = {
+        app_version = APP_VERSION,
         running = pid ~= nil,
         pid = pid,
         current_id = cur_id,
@@ -655,6 +787,7 @@ elseif command == "status" then
         socks_port = s_port,
         http_host = h_host,
         http_port = h_port,
+        log_level = setting("log_level") or "warning",
         socks_listening = check_port_listening(s_port),
         http_listening = check_port_listening(h_port),
         core_status = check_core_status()
@@ -695,25 +828,29 @@ elseif command == "set-source" then
     end
     set_source(c_src, a_src)
     os.exit(0)
+elseif command == "migrate" then
+    local ok = migrate_to_uci()
+    io.write(ok and "migrated to uci successfully\n" or "uci migration not available or completed\n")
+    os.exit(0)
 elseif command == "restart" or command == "start" then
     local cur = current_id()
     if cur and find_node(data, cur) then
         local ok, err = select_node(cur)
         os.exit(ok and 0 or 1)
-    elseif file_exists(CONFIG_FILE) then
-        local ret = os.execute("/etc/init.d/xc-xray restart >/dev/null 2>&1")
+    elseif file_exists(CONFIG_FILE) or file_exists(COMPAT_CONFIG) then
+        local ret = os.execute("/etc/init.d/xc restart >/dev/null 2>&1")
         os.exit(ret == 0 and 0 or 1)
     else
         io.stderr:write("no active node or configuration to start\n")
         os.exit(1)
     end
 elseif command == "stop" then
-    local ret = os.execute("/etc/init.d/xc-xray stop >/dev/null 2>&1")
+    local ret = os.execute("/etc/init.d/xc stop >/dev/null 2>&1")
     os.exit(ret == 0 and 0 or 1)
 elseif tonumber(command) then
     local ok = select_node(tonumber(command))
     os.exit(ok and 0 or 1)
 else
-    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc test | xc set-source <core> [asset]\n")
+    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc test | xc migrate | xc set-source <core> [asset]\n")
     os.exit(2)
 end

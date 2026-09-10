@@ -198,8 +198,9 @@ run_staging_tests() {
         return 1
     fi
 
-    if sshpass -p "$STAGING_PASS" ssh -o StrictHostKeyChecking=no -o ConnectTimeout=3 "root@$STAGING_HOST" "echo OK" >/dev/null 2>&1; then
-        pass "Staging 路由器 SSH 认证成功"
+    local ssh_staging="sshpass -p $STAGING_PASS ssh -o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcceptedKeyTypes=+ssh-rsa"
+    if $ssh_staging -o ConnectTimeout=3 "root@$STAGING_HOST" "echo OK" >/dev/null 2>&1; then
+        pass "Staging 路由器 $STAGING_HOST SSH 认证成功"
     else
         fail "Staging 路由器 SSH 认证或连接失败"
         return 1
@@ -207,7 +208,7 @@ run_staging_tests() {
 
     info "7. 真机核心文件与执行权限检查 ($STAGING_HOST)"
     local perms_check
-    perms_check=$(sshpass -p "$STAGING_PASS" ssh -o StrictHostKeyChecking=no "root@$STAGING_HOST" \
+    perms_check=$($ssh_staging "root@$STAGING_HOST" \
         '[ -x /usr/bin/xc ] && [ -x /usr/libexec/rpcd/luci.xc ] && [ -f /usr/lib/lua/luci/view/xc/overview.htm ] && echo OK || echo FAIL')
     if [ "$perms_check" = "OK" ]; then
         pass "/usr/bin/xc、rpcd/luci.xc 及 overview.htm 文件存在且权限就绪"
@@ -218,7 +219,7 @@ run_staging_tests() {
     info "8. 真机极速延迟探活引擎实测 ($STAGING_HOST)"
     # 执行单节点测速，超时时间 10 秒
     local probe_output
-    probe_output=$(timeout 10 sshpass -p "$STAGING_PASS" ssh -o StrictHostKeyChecking=no "root@$STAGING_HOST" "xc probe 1 5" 2>&1 || true)
+    probe_output=$(timeout 10 $ssh_staging "root@$STAGING_HOST" "xc probe 1 5" 2>&1 || true)
     
     if echo "$probe_output" | grep -q '"success": true'; then
         local latency
@@ -230,7 +231,7 @@ run_staging_tests() {
 
     info "9. 真机后台 HTTP/RPCD 接口状态与死锁检查 ($STAGING_HOST)"
     local status_output
-    status_output=$(timeout 6 sshpass -p "$STAGING_PASS" ssh -o StrictHostKeyChecking=no "root@$STAGING_HOST" "/usr/libexec/rpcd/luci.xc call get_status </dev/null" 2>&1 || true)
+    status_output=$(timeout 6 $ssh_staging "root@$STAGING_HOST" "/usr/libexec/rpcd/luci.xc call get_status </dev/null" 2>&1 || true)
     if echo "$status_output" | grep -q '"running"'; then
         pass "真机 get_status 接口 0 秒响应且返回完整运行状态 JSON"
     else
@@ -239,7 +240,7 @@ run_staging_tests() {
 
     info "10. 真机前端页面结构防遮挡与 Tab 菜单验证 ($STAGING_HOST)"
     local html_check
-    html_check=$(sshpass -p "$STAGING_PASS" ssh -o StrictHostKeyChecking=no "root@$STAGING_HOST" \
+    html_check=$($ssh_staging "root@$STAGING_HOST" \
         "grep -q 'id=\"xc-tabs\"' /usr/lib/lua/luci/view/xc/overview.htm && grep -q 'node-modal-mask.*style=\"display:none;\"' /usr/lib/lua/luci/view/xc/overview.htm && echo OK || echo FAIL")
     if [ "$html_check" = "OK" ]; then
         pass "真机 LuCI 模板页面已具备完整的 Tab 选项卡与模态框防遮挡属性"

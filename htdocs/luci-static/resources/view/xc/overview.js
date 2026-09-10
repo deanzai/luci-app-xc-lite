@@ -556,6 +556,12 @@ return view.extend({
 		return E('div', { 'class': 'cbi-section' }, [
 			E('div', { 'class': 'cbi-section-node' }, [
 				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('插件版本')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.15-1').replace(/^v/, ''))
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('服务运行状态')),
 					E('div', { 'class': 'cbi-value-field' }, [
 						isRunning 
@@ -1112,6 +1118,14 @@ return view.extend({
 		var probeTimeout = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_timeout) || 5 });
 		var probeConcurrency = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_concurrency) || 3 });
 
+		var logLevelSelect = E('select', { 'class': 'cbi-input-select', 'style': 'width:280px;' }, [
+			E('option', { 'value': 'none', 'selected': (settingsData && settingsData.log_level) === 'none' }, _('none (静默无日志)')),
+			E('option', { 'value': 'error', 'selected': (settingsData && settingsData.log_level) === 'error' }, _('error (仅记录错误)')),
+			E('option', { 'value': 'warning', 'selected': !settingsData || !settingsData.log_level || settingsData.log_level === 'warning' }, _('warning (默认推荐：静默连接流水，仅告警)')),
+			E('option', { 'value': 'info', 'selected': (settingsData && settingsData.log_level) === 'info' }, _('info (排查推荐：记录详细连接与路由分流)')),
+			E('option', { 'value': 'debug', 'selected': (settingsData && settingsData.log_level) === 'debug' }, _('debug (全量内部调试)'))
+		]);
+
 		var fixedSelect = E('select', { 'class': 'cbi-input-select' });
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
 		var curFixed = nodesData ? nodesData.fixed_proxy_id : null;
@@ -1207,6 +1221,13 @@ return view.extend({
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, _('Xray 系统日志级别 (log_level)')),
+					E('div', { 'class': 'cbi-value-field' }, [
+						logLevelSelect,
+						E('div', { 'class': 'cbi-value-description' }, _('选择 warning/error/none 时将自动静默每笔请求连接流水 (from ... accepted ...)，防止系统日志刷屏；选择 info 时将记录详细连接请求来源与分流走向。保存后系统将自动平滑重载 Xray 核心生效。'))
+					])
+				]),
+				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }),
 					E('div', { 'class': 'cbi-value-field' }, [
 						E('button', {
@@ -1218,6 +1239,7 @@ return view.extend({
 									socks_port: Number(socksPort.value.trim()),
 									http_host: httpHost.value.trim(),
 									http_port: Number(httpPort.value.trim()),
+									log_level: logLevelSelect.value,
 									proxy_host: proxyHost.value.trim(),
 									probe_url: probeUrl.value.trim(),
 									health_url: healthUrl.value.trim(),
@@ -1227,7 +1249,7 @@ return view.extend({
 								callSaveSettings(newSettings, Number(fixedSelect.value)).then(function(res) {
 									ev.target.disabled = false;
 									if (res && res.code === 0) {
-										ui.addNotification(null, E('p', {}, _('全局设置已成功保存！')), 'success');
+										ui.addNotification(null, E('p', {}, _('全局设置已成功保存！Xray 核心已平滑重载生效。')), 'success');
 									} else {
 										ui.addNotification(null, E('p', {}, _('保存全局设置失败')), 'danger');
 									}
@@ -1291,7 +1313,10 @@ return view.extend({
 		});
 
 		var m = E('div', { 'class': 'cbi-map' }, [
-			E('h2', {}, _('xc 节点切换与分流管理器')),
+			E('h2', {}, [
+				_('xc 节点切换与分流管理器'),
+				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.15-1').replace(/^v/, ''))
+			]),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),
 			this.renderStatusHeader(status, nodesData),

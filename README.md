@@ -4,11 +4,18 @@
 
 ## 核心特性
 
-- **现代 LuCI Web 控制台**：基于 OpenWrt 21.02+ / 22.03+ / 23.05+ / 24.10 现代 JavaScript 视图与 rpcd 架构，无需刷新页面即可实现实时动态交互。
+- **现代 LuCI Web 控制台**：基于 OpenWrt 21.02+ / 22.03+ / 23.05+ / 24.10 现代 JavaScript 视图与 rpcd 架构，无需刷新页面即可实现实时动态交互；主界面直观展示插件版本号。
+- **全体系 UCI 统筹持久化**：遵循 OpenWrt 官方标准配置规范，将节点与全局运行参数收敛于 `/etc/config/xc`，支持固件升级无损保留配置 (`sysupgrade`)。
+- **保护 Flash 寿命 (tmpfs 内存盘)**：生成的 Xray 运行时配置直接写入内存盘 `/var/etc/xc/config.json`，消除频繁切换节点造成的闪存磨损隐患，同时提供兼容软链接。
+- **系统日志级别与连接流水智能控制**：
+  - 深度联动 Xray 的 `access` 与 `loglevel` 机制；
+  - 日常使用选择 `warning` 自动静默连接流水，彻底消除系统日志 (`logread`) 刷屏；
+  - 故障排查时选择 `info` 实时捕获每笔连接来源、域名嗅探与路由分流走向 (`[socks-in -> proxy]`)；
+  - 保存全局配置自动平滑重载 Xray 核心生效，无需手动重启。
 - **手动切换指定节点**：一键切换出口节点，自动执行 Xray 配置校验、平滑重启服务、双端口健康检查；遇异常自动回滚上一配置。
 - **可视化节点管理**：
   - 支持 **VLESS REALITY**（SNI、Public Key、Short ID、Fingerprint、Flow xtls-rprx-vision）及 **NaiveProxy SOCKS5** 协议节点。
-  - 在 Web 界面直接**添加新节点**、编辑参数与删除节点，持久化维护 `/etc/xc/nodes.json`。
+  - 在 Web 界面直接**添加新节点**、编辑参数与删除节点。
 - **全链路代理测速**：
   - 支持**手动刷新全部测速**及**单节点独立测速**。
   - 为节点生成独立临时监听并向真实目标（默认 `gstatic.com/generate_204`）请求，测量真实代理链毫秒级延迟，非单纯 TCP ping。
@@ -17,8 +24,8 @@
   - 当前手动选择的节点（`proxy-selected`）承担普通海外流量与最终 fallback。
   - 严格的 DNS 防泄露：DoH (1.1.1.1) 查询经代理发送，禁用本地 DNS fallback。
 - **双入站端口支持**：
-  - `LAN_IP:7890` (SOCKS5 / SOCKS5h)
-  - `LAN_IP:10809` (HTTP 代理)
+  - `0.0.0.0:7890` (SOCKS5 / SOCKS5h)
+  - `0.0.0.0:10809` (HTTP 代理)
 
 ---
 
@@ -32,7 +39,8 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.15-1)
+├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
 │   └── luci-static/
@@ -43,33 +51,40 @@ luci-app-xc-lite/
 ├── root/
 │   ├── etc/
 │   │   ├── config/
-│   │   │   └── xc                         # UCI 配置文件
+│   │   │   └── xc                         # UCI 配置文件 (全局参数与节点配置中枢)
 │   │   ├── init.d/
-│   │   │   └── xc-xray                    # OpenWrt procd 守护进程管理脚本
+│   │   │   └── xc                         # OpenWrt procd 守护进程管理脚本
 │   │   ├── uci-defaults/
-│   │   │   └── 80_luci-app-xc             # 安装后初始化与权限配置脚本
+│   │   │   └── 80_luci-app-xc             # 安装后初始化、权限与自动迁移脚本
 │   │   └── xc/
 │   │       ├── settings.example.json      # 运行设置模板
 │   │       └── nodes.example.json         # 节点清单模板
 │   └── usr/
 │       ├── bin/
-│       │   └── xc                         # 核心 CLI 管理脚本 (支持 JSON/RPC 模式与命令行模式)
+│       │   └── xc                         # 核心 CLI 管理脚本 (支持内存盘配置生成与平滑回滚)
+│       ├── lib/
+│       │   └── lua/
+│       │       └── luci/
+│       │           ├── controller/
+│       │           │   └── xc.lua         # LuCI 控制器与无阻塞无死锁管道保护
+│       │           └── view/
+│       │               └── xc/
+│       │                   └── overview.htm # LuCI 模板视图 (老版本兼容与现代化防遮挡)
 │       ├── libexec/
 │       │   └── rpcd/
-│       │       └── luci.xc                # rpcd 后端微服务脚本 (提供 Web RPC 接口)
+│       │       └── luci.xc                # rpcd 后端微服务脚本 (提供 Web RPC 接口与平滑重载)
 │       └── share/
 │           ├── acl.d/
 │           │   └── luci-app-xc.json       # LuCI ACL 安全权限声明
 │           └── luci/
 │               └── menu.d/
 │                   └── luci-app-xc.json   # LuCI Web 菜单项声明 (挂载至 服务 > xc 节点分流)
+├── scripts/
+│   ├── verify.sh                          # 自动化先验后发质量门禁脚本 (本地 + Staging 双道门禁)
+│   └── release.sh                         # 全量灰度发布与生产同步流水线脚本
 ├── po/                                    # 国际化语言包 (i18n)
-│   ├── templates/
-│   │   └── xc.pot
-│   └── zh_Hans/
-│       └── xc.po
 ├── examples/                              # 配置示例
-├── docs/                                  # 架构文档
+├── docs/                                  # 架构文档与测试规范
 └── README.md
 ```
 
