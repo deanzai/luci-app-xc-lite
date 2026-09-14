@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-PROJECT_DIR="/mnt/c/Users/Administrator/.gemini/antigravity/scratch/luci-app-xc-lite"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
 echo "=== 1. 准备构建目录与文件 ==="
