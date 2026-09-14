@@ -76,7 +76,22 @@ resolve_asset_dir() {
 }
 
 start_service() {
+	local enabled
+	enabled="$(get_setting "enabled" "1")"
+	if [ "$enabled" != "1" ]; then
+		logger -t xc -p daemon.info "Service disabled (xc.main.enabled=$enabled); skipping start."
+		return 0
+	fi
+
 	mkdir -p /etc/xc/bin /etc/xc/assets /var/etc/xc /var/log || return 1
+
+	# 清理重启后残留的无效死链接 (broken symlinks)
+	if [ -L /etc/xc/config.json ] && [ ! -e /etc/xc/config.json ]; then
+		rm -f /etc/xc/config.json 2>/dev/null
+	fi
+	if [ -L /etc/xc/current ] && [ ! -e /etc/xc/current ]; then
+		rm -f /etc/xc/current 2>/dev/null
+	fi
 
 	local xray_path asset_dir
 	xray_path="$(resolve_xray 2>/dev/null)" || xray_path=""
@@ -94,7 +109,15 @@ start_service() {
 
 	# 运行时动态配置优先保存在 /var/etc/xc/config.json (tmpfs内存盘，保护Flash)
 	local config_file="/var/etc/xc/config.json"
-	if [ ! -s "$config_file" ] && [ -s /etc/xc/config.json ]; then
+	if [ ! -s "$config_file" ]; then
+		# 设备重启开机后 RAM 被清空，自动调用 xc generate 根据 UCI 重新渲染配置
+		if [ -x /usr/bin/xc ]; then
+			/usr/bin/xc generate "$config_file" >/dev/null 2>&1
+		fi
+	fi
+
+	# 兜底：若仍未生成，检查是否存在非符号链接的持久化静态配置
+	if [ ! -s "$config_file" ] && [ -f /etc/xc/config.json ] && [ ! -L /etc/xc/config.json ]; then
 		cp -f /etc/xc/config.json "$config_file" 2>/dev/null
 	fi
 
@@ -103,12 +126,10 @@ start_service() {
 		ln -sf "$config_file" /etc/xc/config.json 2>/dev/null
 	fi
 
-	if [ ! -s "$config_file" ] && [ ! -s /etc/xc/config.json ]; then
-		logger -t xc -p daemon.err "Config file missing: /var/etc/xc/config.json and /etc/xc/config.json"
+	if [ ! -s "$config_file" ]; then
+		logger -t xc -p daemon.err "Config file missing or generation failed: $config_file"
 		return 1
 	fi
-
-	[ -s "$config_file" ] || config_file="/etc/xc/config.json"
 
 	procd_open_instance
 	procd_set_param command "$xray_path" run -c "$config_file"
@@ -129,5 +150,5 @@ reload_service() {
 }
 
 service_triggers() {
-	procd_add_reload_trigger "xc" "network"
+	procd_add_reload_trigger "xc"
 }

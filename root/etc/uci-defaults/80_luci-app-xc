@@ -7,6 +7,11 @@
 
 	# 触发向 UCI 的自动平滑数据迁移
 	[ -x /usr/bin/xc ] && /usr/bin/xc migrate >/dev/null 2>&1 || true
+
+	# 遵循 UCI enabled 配置开启自启
+	if [ "$(uci -q get xc.main.enabled)" != "0" ]; then
+		/etc/init.d/xc enable 2>/dev/null || true
+	fi
 }
 
 exit 0

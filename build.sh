@@ -65,9 +65,11 @@ cat > "$BUILD_DIR/control/postinst" << 'EOF'
         /etc/init.d/xc-xray disable 2>/dev/null || true
         rm -f /etc/init.d/xc-xray 2>/dev/null || true
     fi
-    /etc/init.d/xc enable 2>/dev/null
-    if [ -s /var/etc/xc/config.json ] || [ -s /etc/xc/config.json ]; then
+    if [ "$(uci -q get xc.main.enabled)" != "0" ]; then
+        /etc/init.d/xc enable 2>/dev/null
         /etc/init.d/xc restart 2>/dev/null || true
+    else
+        /etc/init.d/xc disable 2>/dev/null
     fi
 }
 exit 0

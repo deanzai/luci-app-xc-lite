@@ -12,38 +12,63 @@
 @media (prefers-color-scheme: dark) {
     .xc-modal { background:#222; color:#eee; }
 }
-.xc-hidden { display:none !important; }
+.xc-hidden { display: none !important; pointer-events: none !important; }
+.xc-hidden,
+.xc-modal-mask.xc-hidden,
+.xc-modal-mask[style*="display: none"],
+.xc-modal-mask[style*="display:none"] {
+    display: none !important;
+    pointer-events: none !important;
+    opacity: 0 !important;
+    visibility: hidden !important;
+}
 .xc-spin { display:inline-block; animation:xc-rotate 1s linear infinite; }
 @keyframes xc-rotate { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 
-.xc-tab-item {
+/* 独立原生按钮 Tab 栏：彻底消除 <a> 标签与主题全局页面跳转 loading 遮罩层冲突 */
+.xc-tab-bar {
+    display: flex;
+    margin: 18px 0 15px 0;
+    padding: 0;
+    border-bottom: 2px solid #2563eb;
+    gap: 6px;
+    align-items: flex-end;
+}
+.xc-tab-btn {
     cursor: pointer;
     padding: 9px 20px;
+    border: none;
     border-radius: 6px 6px 0 0;
     transition: all 0.2s ease;
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 13px;
     user-select: none;
+    outline: none;
+    line-height: 1.4;
+    font-family: inherit;
 }
-.xc-tab-active {
+.xc-tab-btn-active {
     background: #2563eb !important;
     color: #ffffff !important;
     font-weight: bold;
+    box-shadow: 0 2px 4px rgba(37,99,235,0.2);
 }
-.xc-tab-inactive {
+.xc-tab-btn-inactive {
     background: #e5e7eb;
     color: #4b5563;
 }
-.xc-tab-inactive:hover {
+.xc-tab-btn-inactive:hover {
     background: #d1d5db;
     color: #1f2937;
 }
 @media (prefers-color-scheme: dark) {
-    .xc-tab-inactive {
+    .xc-tab-btn-inactive {
         background: #374151;
         color: #d1d5db;
     }
-    .xc-tab-inactive:hover {
+    .xc-tab-btn-inactive:hover {
         background: #4b5563;
         color: #f3f4f6;
     }
@@ -51,7 +76,7 @@
 </style>
 
 <div class="cbi-map">
-    <h2 name="content"><%=translate("xc 节点切换与分流管理器")%> <span class="xc-badge xc-badge-info" id="xc-app-version" style="font-size:12px; vertical-align:middle; margin-left:8px;">v1.0.15-1</span></h2>
+    <h2 name="content"><%=translate("xc 节点切换与分流管理器")%> <span class="xc-badge xc-badge-info" id="xc-app-version" style="font-size:12px; vertical-align:middle; margin-left:8px;">v1.0.16-1</span></h2>
     <div class="cbi-map-descr">
         <%=translate("轻量级 Xray 节点切换与双协议分流管理面板，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、手动平滑切换与失败回滚。")%>
     </div>
@@ -72,7 +97,7 @@
             <div class="cbi-value">
                 <label class="cbi-value-title"><%=translate("插件版本")%></label>
                 <div class="cbi-value-field">
-                    <span id="stat-app-version" style="font-weight:bold; color:#4b5563;">v1.0.15-1</span>
+                    <span id="stat-app-version" style="font-weight:bold; color:#4b5563;">v1.0.16-1</span>
                 </div>
             </div>
             <div class="cbi-value">
@@ -113,18 +138,18 @@
         </div>
     </fieldset>
 
-    <!-- 顶部 Tab 选项卡导航 -->
-    <ul class="cbi-tabmenu" id="xc-tabs" style="display:flex; margin:18px 0 15px 0; padding:0; list-style:none; border-bottom:2px solid #2563eb; gap:6px;">
-        <li id="tab-btn-nodes" class="xc-tab-item xc-tab-active" onclick="switchTab('nodes')">
-            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">📋 <%=translate("节点列表与测速")%></a>
-        </li>
-        <li id="tab-btn-settings" class="xc-tab-item xc-tab-inactive" onclick="switchTab('settings')">
-            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">⚙️ <%=translate("全局基础设置")%></a>
-        </li>
-        <li id="tab-btn-core" class="xc-tab-item xc-tab-inactive" onclick="switchTab('core')">
-            <a href="javascript:void(0)" style="color:inherit; text-decoration:none;">📦 <%=translate("核心组件与规则")%></a>
-        </li>
-    </ul>
+    <!-- 顶部 Tab 选项卡导航 (纯原生 button，杜绝主题全局链接劫持) -->
+    <div class="xc-tab-bar" id="xc-tabs">
+        <button type="button" id="tab-btn-nodes" class="xc-tab-btn xc-tab-btn-active" onclick="switchTab('nodes', event)">
+            📋 <%=translate("节点列表与测速")%>
+        </button>
+        <button type="button" id="tab-btn-settings" class="xc-tab-btn xc-tab-btn-inactive" onclick="switchTab('settings', event)">
+            ⚙️ <%=translate("全局基础设置")%>
+        </button>
+        <button type="button" id="tab-btn-core" class="xc-tab-btn xc-tab-btn-inactive" onclick="switchTab('core', event)">
+            📦 <%=translate("核心组件与规则")%>
+        </button>
+    </div>
 
     <!-- 选项卡 1: 节点管理清单 -->
     <fieldset class="cbi-section" id="sec-nodes" style="display:block;">
@@ -164,6 +189,18 @@
         <legend><%=translate("全局运行参数与代理接口设定 (/etc/xc/settings.json)")%></legend>
         <form id="form-settings" onsubmit="doSaveSettings(event)">
             <div class="cbi-section-node">
+                <!-- 启用服务与开机自启总开关 -->
+                <div class="cbi-value">
+                    <label class="cbi-value-title"><strong><%=translate("启用服务与开机自启")%></strong></label>
+                    <div class="cbi-value-field">
+                        <label style="display:inline-flex; align-items:center; cursor:pointer; font-size:13px; font-weight:bold;">
+                            <input type="checkbox" id="setting-enabled" class="cbi-input-checkbox" style="vertical-align:middle; width:18px; height:18px; margin-right:8px;" checked>
+                            <%=translate("启用 xc 代理服务并开启开机自动启动 (/etc/rc.d/S95xc)")%>
+                        </label>
+                        <div class="cbi-value-description"><%=translate("开启后服务随路由器系统开机自动拉起与恢复；取消勾选后保存将停止服务并注销开机自启。")%></div>
+                    </div>
+                </div>
+
                 <!-- SOCKS5 代理接口单独设定 -->
                 <div class="cbi-value">
                     <label class="cbi-value-title"><strong><%=translate("SOCKS5 代理接口")%></strong></label>
@@ -667,7 +704,7 @@ function renderStatus() {
     var sHost = st.socks_host || (appData.settings && appData.settings.socks_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
     var hHost = st.http_host || (appData.settings && appData.settings.http_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
 
-    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.15-1";
+    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.16-1";
     var elBadge = document.getElementById("xc-app-version");
     if (elBadge) elBadge.innerText = "v" + appVer.replace(/^v/, "");
     var elStatVer = document.getElementById("stat-app-version");
@@ -937,7 +974,11 @@ function renderNodes() {
     });
 }
 
-function switchTab(tabId) {
+function switchTab(tabId, ev) {
+    if (ev) {
+        if (typeof ev.preventDefault === "function") ev.preventDefault();
+        if (typeof ev.stopPropagation === "function") ev.stopPropagation();
+    }
     var tabs = ["nodes", "settings", "core"];
     tabs.forEach(function(t) {
         var sec = document.getElementById("sec-" + t);
@@ -945,16 +986,28 @@ function switchTab(tabId) {
         if (t === tabId) {
             if (sec) sec.style.display = "block";
             if (btn) {
-                btn.className = "xc-tab-item xc-tab-active";
+                btn.className = "xc-tab-btn xc-tab-btn-active";
             }
         } else {
             if (sec) sec.style.display = "none";
             if (btn) {
-                btn.className = "xc-tab-item xc-tab-inactive";
+                btn.className = "xc-tab-btn xc-tab-btn-inactive";
             }
         }
     });
     try { sessionStorage.setItem("xc_active_tab", tabId); } catch(e) {}
+
+    // 防御性清理可能被第三方主题全局捕获的 loading 遮罩层，杜绝界面卡死
+    try {
+        var suspiciousMasks = document.querySelectorAll("#loading, .loading, .argon-loading, .cbi-loading");
+        suspiciousMasks.forEach(function(el) {
+            if (el && el.style) {
+                el.style.display = "none";
+                el.style.opacity = "0";
+                el.style.pointerEvents = "none";
+            }
+        });
+    } catch(e) {}
 }
 
 function fillProbeUrl(url) {
@@ -964,6 +1017,10 @@ function fillProbeUrl(url) {
 
 function renderSettings() {
     var s = appData.settings || {};
+    var elEnabled = document.getElementById("setting-enabled");
+    if (elEnabled) {
+        elEnabled.checked = (s.enabled === undefined || s.enabled === "1" || s.enabled === 1 || s.enabled === true);
+    }
     document.getElementById("setting-socks-host").value = s.socks_host || s.listen_host || "127.0.0.1";
     document.getElementById("setting-socks-port").value = s.socks_port || 7890;
     document.getElementById("setting-http-host").value = s.http_host || s.listen_host || "127.0.0.1";
@@ -1293,8 +1350,10 @@ function doDeleteNode(id) {
 
 function doSaveSettings(ev) {
     ev.preventDefault();
+    var enabledChecked = document.getElementById("setting-enabled") ? document.getElementById("setting-enabled").checked : true;
     var payload = {
         settings: {
+            enabled: enabledChecked ? "1" : "0",
             socks_host: document.getElementById("setting-socks-host").value.trim(),
             socks_port: Number(document.getElementById("setting-socks-port").value.trim()),
             http_host: document.getElementById("setting-http-host").value.trim(),
@@ -1316,8 +1375,11 @@ function doSaveSettings(ev) {
     }).then(function(r) { return r.json(); }).then(function(res) {
         if (res && res.code === 0) {
             var tip = document.getElementById("settings-tip");
+            tip.innerText = enabledChecked 
+                ? "<%=translate('✓ 设置已保存，开机自启已就绪，Xray 核心已重载生效！')%>"
+                : "<%=translate('✓ 设置已保存，服务已停止并关闭开机自启。')%>";
             tip.classList.remove("xc-hidden");
-            setTimeout(function() { tip.classList.add("xc-hidden"); }, 3000);
+            setTimeout(function() { tip.classList.add("xc-hidden"); }, 3500);
             loadAll();
         } else {
             alert("<%=translate('设置保存失败')%>");

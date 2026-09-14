@@ -10,6 +10,7 @@ local SETTINGS_FILE = ROOT .. "/settings.json"
 local CURRENT_FILE = ROOT .. "/current"
 
 local DEFAULT_SETTINGS = {
+    enabled = "1",
     listen_host = "0.0.0.0",
     socks_host = "0.0.0.0",
     socks_port = 7890,
@@ -125,7 +126,7 @@ local function sync_json_compat(nodes_payload, settings_payload)
     end
 end
 
-local APP_VERSION = "1.0.15-1"
+local APP_VERSION = "1.0.16-1"
 
 local methods = {
     get_status = function()
@@ -451,6 +452,21 @@ local methods = {
             if params and params.fixed_proxy_id then
                 uci_cursor:set("xc", "main", "fixed_proxy_id", tostring(params.fixed_proxy_id))
             end
+
+            -- 联动服务自启状态
+            local is_enabled = true
+            if settings.enabled ~= nil then
+                local ev = tostring(settings.enabled)
+                is_enabled = (ev == "1" or ev == "true")
+                uci_cursor:set("xc", "main", "enabled", is_enabled and "1" or "0")
+                if is_enabled then
+                    os.execute("/etc/init.d/xc enable >/dev/null 2>&1")
+                else
+                    os.execute("/etc/init.d/xc disable >/dev/null 2>&1")
+                    os.execute("/etc/init.d/xc stop >/dev/null 2>&1")
+                end
+            end
+
             local ok_commit = pcall(uci_cursor.commit, uci_cursor, "xc")
 
             -- 同步兼顾更新 settings.json 与 nodes.json 中的 fixed_proxy_id
@@ -465,12 +481,14 @@ local methods = {
                 end
             end
 
-            -- 若服务正在运行，执行 xc restart 以重新渲染配置生效
-            local p = io.popen("pgrep -f 'xray run -c'")
-            local pid = p and p:read("*l")
-            if p then p:close() end
-            if pid then
-                os.execute("/usr/bin/xc restart >/dev/null 2>&1")
+            -- 若已启用且服务正在运行（或刚刚启用），执行 xc restart 以重新渲染配置生效
+            if is_enabled then
+                local p = io.popen("pgrep -f 'xray run -c'")
+                local pid = p and p:read("*l")
+                if p then p:close() end
+                if pid then
+                    os.execute("/usr/bin/xc restart >/dev/null 2>&1")
+                end
             end
 
             output_json({ code = ok_commit and 0 or 1, message = ok_commit and "saved" or "save error" })

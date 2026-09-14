@@ -1106,6 +1106,14 @@ return view.extend({
 	},
 
 	renderSettingsSection: function(nodesData, settingsData) {
+		var isEnabled = (settingsData && settingsData.enabled !== undefined) ? (settingsData.enabled === '1' || settingsData.enabled === 1 || settingsData.enabled === true) : true;
+		var enabledCheckbox = E('input', {
+			'type': 'checkbox',
+			'class': 'cbi-input-checkbox',
+			'style': 'vertical-align:middle; width:18px; height:18px; margin-right:8px;',
+			'checked': isEnabled
+		});
+
 		var socksHost = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'style': 'width:180px;', 'value': (settingsData && settingsData.socks_host) || (settingsData && settingsData.listen_host) || '127.0.0.1' });
 		var socksPort = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.socks_port) || 7890 });
 
@@ -1143,6 +1151,16 @@ return view.extend({
 		return E('div', { 'class': 'cbi-section' }, [
 			E('h3', {}, _('全局基础设置 (/etc/xc/settings.json)')),
 			E('div', { 'class': 'cbi-section-node' }, [
+				E('div', { 'class': 'cbi-value' }, [
+					E('label', { 'class': 'cbi-value-title' }, E('strong', {}, _('启用服务与开机自启'))),
+					E('div', { 'class': 'cbi-value-field' }, [
+						E('label', { 'style': 'display:inline-flex; align-items:center; cursor:pointer; font-weight:bold;' }, [
+							enabledCheckbox,
+							_('启用 xc 代理服务并开启开机自动启动 (/etc/rc.d/S95xc)')
+						]),
+						E('div', { 'class': 'cbi-value-description' }, _('开启后服务随路由器系统开机自动拉起与恢复；取消勾选后保存将停止服务并注销开机自启。'))
+					])
+				]),
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, E('strong', {}, _('SOCKS 代理接口'))),
 					E('div', { 'class': 'cbi-value-field' }, [
@@ -1235,6 +1253,7 @@ return view.extend({
 							'click': function(ev) {
 								ev.target.disabled = true;
 								var newSettings = {
+									enabled: enabledCheckbox.checked ? '1' : '0',
 									socks_host: socksHost.value.trim(),
 									socks_port: Number(socksPort.value.trim()),
 									http_host: httpHost.value.trim(),
@@ -1249,7 +1268,10 @@ return view.extend({
 								callSaveSettings(newSettings, Number(fixedSelect.value)).then(function(res) {
 									ev.target.disabled = false;
 									if (res && res.code === 0) {
-										ui.addNotification(null, E('p', {}, _('全局设置已成功保存！Xray 核心已平滑重载生效。')), 'success');
+										var msg = enabledCheckbox.checked 
+											? _('全局设置已成功保存！开机自启已就绪，Xray 核心已平滑重载生效。') 
+											: _('全局设置已成功保存！服务已停止并关闭开机自启。');
+										ui.addNotification(null, E('p', {}, msg), 'success');
 									} else {
 										ui.addNotification(null, E('p', {}, _('保存全局设置失败')), 'danger');
 									}
@@ -1282,9 +1304,16 @@ return view.extend({
 			{ id: 'core', name: '📦 ' + _('核心组件与规则'), pane: corePane }
 		];
 
-		var tabUl = E('ul', { 'class': 'cbi-tabmenu', 'style': 'margin-top:16px; margin-bottom:18px;' });
+		var tabBar = E('div', {
+			'class': 'xc-tab-bar',
+			'style': 'display:flex; margin-top:16px; margin-bottom:18px; border-bottom:2px solid #2563eb; gap:6px; align-items:flex-end;'
+		});
 
-		var switchTab = function(tabId) {
+		var switchTab = function(tabId, ev) {
+			if (ev) {
+				if (typeof ev.preventDefault === 'function') ev.preventDefault();
+				if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+			}
 			activeTab = tabId;
 			try {
 				window.sessionStorage.setItem('xc_active_tab', tabId);
@@ -1293,34 +1322,50 @@ return view.extend({
 			tabs.forEach(function(t) {
 				var isCur = (t.id === tabId);
 				t.pane.style.display = isCur ? 'block' : 'none';
-				if (t.li) {
-					t.li.className = isCur ? 'cbi-tab' : 'cbi-tab-disabled';
+				if (t.btn) {
+					t.btn.className = isCur ? 'cbi-button cbi-button-apply' : 'cbi-button';
+					t.btn.style.fontWeight = isCur ? 'bold' : 'normal';
+					t.btn.style.backgroundColor = isCur ? '#2563eb' : '';
+					t.btn.style.color = isCur ? '#ffffff' : '';
 				}
 			});
+
+			// 防御性清理可能被第三方主题全局捕获激活的 loading 遮罩层
+			try {
+				var masks = document.querySelectorAll('#loading, .loading, .argon-loading, .cbi-loading');
+				masks.forEach(function(el) {
+					if (el && el.style) {
+						el.style.display = 'none';
+						el.style.opacity = '0';
+						el.style.pointerEvents = 'none';
+					}
+				});
+			} catch(e) {}
 		};
 
 		tabs.forEach(function(t) {
-			var a = E('a', {
-				'href': '#',
+			var isCur = (t.id === activeTab);
+			t.btn = E('button', {
+				'type': 'button',
+				'class': isCur ? 'cbi-button cbi-button-apply' : 'cbi-button',
+				'style': 'padding:8px 18px; border-radius:6px 6px 0 0; margin-bottom:-2px; outline:none; ' + (isCur ? 'background-color:#2563eb; color:#fff; font-weight:bold;' : 'font-weight:normal;'),
 				'click': function(ev) {
-					ev.preventDefault();
-					switchTab(t.id);
+					switchTab(t.id, ev);
 				}
 			}, t.name);
-			t.li = E('li', { 'class': (t.id === activeTab) ? 'cbi-tab' : 'cbi-tab-disabled' }, [ a ]);
-			tabUl.appendChild(t.li);
-			t.pane.style.display = (t.id === activeTab) ? 'block' : 'none';
+			tabBar.appendChild(t.btn);
+			t.pane.style.display = isCur ? 'block' : 'none';
 		});
 
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, [
 				_('xc 节点切换与分流管理器'),
-				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.15-1').replace(/^v/, ''))
+				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.16-1').replace(/^v/, ''))
 			]),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),
 			this.renderStatusHeader(status, nodesData),
-			tabUl,
+			tabBar,
 			nodePane,
 			settingsPane,
 			corePane
