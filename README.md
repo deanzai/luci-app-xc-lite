@@ -39,7 +39,7 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.17-1)
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.18-1)
 ├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
@@ -181,6 +181,15 @@ xc rollback      # 恢复上一份配置
 ---
 
 ## 版本历史与更新日志 (Changelog)
+
+### [v1.0.18-1] - 2026-09-14
+#### Bug 修复 & 前端稳健性加固
+- **修复 LuCI RPC 解包与前端渲染致命异常**：
+  - **修复 `rpc.declare` 导致节点列表被解构破坏的严重缺陷**：LuCI 现代前端底层 `rpc.js` 在处理含有字段声明的 `expect` 对象时，会将返回结果解包为其首个键值（原 `expect: { version: 1, ... }` 导致 `callGetNodes()` 返回标量 `1` 从而使节点数组变为空）。将 `expect` 修正为 `{}`，并添加 `filter` 稳健防御处理；
+  - **修复严格模式下 `isRunning` 变量未声明 ReferenceError 异常**：在 `renderNodeTable` 开头明确声明 `var isRunning = Boolean(status && status.running);`，根治浏览器因抛出 `Uncaught ReferenceError: isRunning is not defined` 阻断整个页面表格渲染的缺陷；
+  - **全链路实测验证**：已在生产设备（10.3.3.3）上完整验证节点渲染、状态指示、固定分流标记及单节点/全部测速全功能。
+
+---
 
 ### [v1.0.17-1] - 2026-09-14
 #### 新增特性 & Bug 修复

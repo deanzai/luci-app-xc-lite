@@ -13,7 +13,16 @@ var callGetStatus = rpc.declare({
 var callGetNodes = rpc.declare({
 	object: 'luci.xc',
 	method: 'get_nodes',
-	expect: { version: 1, fixed_proxy_id: 1, nodes: [] }
+	expect: {},
+	filter: function(res) {
+		if (!res || typeof res !== 'object') {
+			return { version: 1, fixed_proxy_id: 1, nodes: [] };
+		}
+		if (!Array.isArray(res.nodes)) {
+			res.nodes = [];
+		}
+		return res;
+	}
 });
 
 var callGetSettings = rpc.declare({
@@ -658,6 +667,7 @@ return view.extend({
 
 	renderNodeTable: function(status, nodesData, settingsData) {
 		var self = this;
+		var isRunning = Boolean(status && status.running);
 		var curId = status ? status.current_id : null;
 		var fixedId = nodesData ? nodesData.fixed_proxy_id : 1;
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
@@ -1286,7 +1296,9 @@ return view.extend({
 
 	render: function(data) {
 		var status = data[0] || {};
-		var nodesData = data[1] || { version: 1, fixed_proxy_id: 1, nodes: [] };
+		var nodesData = (data[1] && typeof data[1] === 'object' && Array.isArray(data[1].nodes))
+			? data[1]
+			: { version: 1, fixed_proxy_id: 1, nodes: [] };
 		var settingsData = data[2] || {};
 
 		var activeTab = 'nodes';
