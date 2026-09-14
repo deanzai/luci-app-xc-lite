@@ -1,0 +1,71 @@
+name: Build & Release Packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag name (e.g. v1.0.16-1)'
+        required: true
+        default: 'v1.0.16-1'
+
+jobs:
+  release:
+    name: Build and Publish Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build Packages (IPK & APK)
+        run: |
+          chmod +x build.sh root/usr/bin/xc root/usr/libexec/rpcd/luci.xc root/etc/init.d/xc root/etc/uci-defaults/80_luci-app-xc
+          bash build.sh
+
+      - name: Extract Changelog from README.md
+        id: extract_notes
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ -z "$TAG" ] || [ "$TAG" = "main" ]; then
+            TAG="${{ github.event.inputs.tag_name }}"
+          fi
+          echo "Current Tag: $TAG"
+          python3 -c "
+          import re, sys
+          tag = '$TAG'.lstrip('v')
+          try:
+              with open('README.md', 'r', encoding='utf-8') as f:
+                  content = f.read()
+              pattern = r'### \[v?' + re.escape(tag) + r'\][^\n]*\n(.*?)(?=\n### \[|\n## 许可证|\Z)'
+              match = re.search(pattern, content, re.DOTALL)
+              if match:
+                  notes = match.group(1).strip()
+                  with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
+                      out.write(notes + '\n')
+              else:
+                  with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
+                      out.write('Automated release for ' + '$TAG' + '\n')
+          except Exception as e:
+              with open('RELEASE_NOTES.md', 'w', encoding='utf-8') as out:
+                  out.write('Automated release for ' + '$TAG' + '\n')
+          "
+          cat RELEASE_NOTES.md
+
+      - name: Publish GitHub Release with IPK & APK
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "luci-app-xc ${{ github.ref_name || github.event.inputs.tag_name }}"
+          body_path: RELEASE_NOTES.md
+          files: |
+            luci-app-xc_*_all.ipk
+            luci-app-xc-*-r*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
