@@ -704,7 +704,7 @@ function renderStatus() {
     var sHost = st.socks_host || (appData.settings && appData.settings.socks_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
     var hHost = st.http_host || (appData.settings && appData.settings.http_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
 
-    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.16-1";
+    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.17-1";
     var elBadge = document.getElementById("xc-app-version");
     if (elBadge) elBadge.innerText = "v" + appVer.replace(/^v/, "");
     var elStatVer = document.getElementById("stat-app-version");

@@ -54,7 +54,121 @@ local function output_json(tbl)
     io.write(json.stringify(tbl or {}, 1) .. "\n")
 end
 
--- 自动数据迁移：若 UCI 中尚无配置或节点，从已有 JSON 自动平滑导入
+local CONFIG_FILE = "/var/etc/xc/config.json"
+local COMPAT_CONFIG = ROOT .. "/config.json"
+
+local function extract_nodes_from_config(cfg_path)
+    local raw = read_file(cfg_path)
+    if not raw then return nil end
+    local ok, cfg = pcall(json.parse, raw)
+    if not ok or type(cfg) ~= "table" or type(cfg.outbounds) ~= "table" then
+        return nil
+    end
+
+    local nodes = {}
+    local seen = {}
+    local next_id = 1
+
+    for _, ob in ipairs(cfg.outbounds) do
+        local tag = ob.tag or ""
+        local protocol = (ob.protocol or ""):lower()
+        local stream = ob.streamSettings or {}
+        local settings = ob.settings or {}
+
+        local is_system = (tag == "direct" or tag == "block" or tag == "dns-out" or tag == "bypass" or tag == "warp" or protocol == "freedom" or protocol == "blackhole" or protocol == "dns")
+
+        if not is_system and protocol ~= "" then
+            local node = {
+                id = next_id,
+                type = protocol:upper()
+            }
+
+            if protocol == "vless" then
+                local vnext = settings.vnext and settings.vnext[1]
+                if vnext then
+                    node.server = vnext.address
+                    node.port = tonumber(vnext.port)
+                    local user = vnext.users and vnext.users[1]
+                    if user then
+                        node.uuid = user.id
+                        node.flow = user.flow
+                    end
+                end
+                local sec = (stream.security or ""):lower()
+                if sec == "reality" then
+                    node.type = "VLESS REALITY"
+                    local r = stream.realitySettings or {}
+                    node.public_key = r.publicKey
+                    node.short_id = r.shortId
+                    node.sni = r.serverName
+                    node.fingerprint = r.fingerprint or "chrome"
+                    node.spider_x = r.spiderX
+                elseif sec == "tls" then
+                    node.type = "VLESS TLS"
+                    local t = stream.tlsSettings or {}
+                    node.sni = t.serverName
+                    node.fingerprint = t.fingerprint or "chrome"
+                end
+            elseif protocol == "vmess" then
+                local vnext = settings.vnext and settings.vnext[1]
+                if vnext then
+                    node.server = vnext.address
+                    node.port = tonumber(vnext.port)
+                    local user = vnext.users and vnext.users[1]
+                    if user then
+                        node.uuid = user.id
+                        node.alter_id = user.alterId
+                    end
+                end
+                node.type = "VMess"
+                if (stream.security or ""):lower() == "tls" then
+                    local t = stream.tlsSettings or {}
+                    node.sni = t.serverName
+                end
+            elseif protocol == "trojan" then
+                local srv = settings.servers and settings.servers[1]
+                if srv then
+                    node.server = srv.address
+                    node.port = tonumber(srv.port)
+                    node.uuid = srv.password
+                end
+                node.type = "Trojan"
+                local t = stream.tlsSettings or {}
+                node.sni = t.serverName
+            elseif protocol == "shadowsocks" then
+                local srv = settings.servers and settings.servers[1]
+                if srv then
+                    node.server = srv.address
+                    node.port = tonumber(srv.port)
+                    node.method = srv.method
+                    node.password = srv.password
+                end
+                node.type = "Shadowsocks"
+            elseif protocol == "socks" then
+                local srv = settings.servers and settings.servers[1]
+                if srv then
+                    node.server = srv.address
+                    node.port = tonumber(srv.port)
+                end
+                node.type = "SOCKS5"
+            end
+
+            if node.server and node.port then
+                local dedup_key = tostring(node.type) .. "@" .. tostring(node.server) .. ":" .. tostring(node.port) .. "#" .. tostring(node.uuid or "")
+                if not seen[dedup_key] then
+                    seen[dedup_key] = true
+                    node.name = (tag ~= "" and tag ~= "proxy" and tag ~= "proxy-selected") and tag or (tostring(node.sni or node.server) .. "-" .. tostring(node.port))
+                    table.insert(nodes, node)
+                    next_id = next_id + 1
+                end
+            end
+        end
+    end
+
+    return #nodes > 0 and nodes or nil
+end
+
+-- 自动数据迁移：若 UCI 中尚无配置或节点，从已有 JSON 或 config.json 自动平滑导入
 local function migrate_to_uci()
     if not uci_cursor then return end
     local committed = false
@@ -74,6 +188,7 @@ local function migrate_to_uci()
     end
 
     -- 2. 迁移 nodes.json -> uci xc.<node_id>
+    local node_count = 0
     local n_raw = read_file(NODES_FILE)
     if n_raw then
         local n_ok, n_data = pcall(json.parse, n_raw)
@@ -95,13 +210,45 @@ local function migrate_to_uci()
                             end
                             committed = true
                         end
+                        node_count = node_count + 1
                     end
                 end
             end
         end
     end
 
-    -- 3. 迁移 current -> uci xc.main.current_id
+    -- 3. 若 UCI 和 nodes.json 均无节点，但存在直接添加的 config.json，则自动逆向解析并导入
+    if node_count == 0 then
+        local existing_count = 0
+        uci_cursor:foreach("xc", "node", function() existing_count = existing_count + 1 end)
+        if existing_count == 0 then
+            local extracted = extract_nodes_from_config(CONFIG_FILE) or extract_nodes_from_config(COMPAT_CONFIG)
+            if extracted and #extracted > 0 then
+                for _, node in ipairs(extracted) do
+                    local sec_name = "node_" .. tostring(node.id)
+                    uci_cursor:set("xc", sec_name, "node")
+                    for nk, nv in pairs(node) do
+                        if nv ~= nil then
+                            uci_cursor:set("xc", sec_name, nk, tostring(nv))
+                        end
+                    end
+                    committed = true
+                end
+                if uci_cursor:get("xc", "main", "fixed_proxy_id") == nil then
+                    uci_cursor:set("xc", "main", "fixed_proxy_id", "1")
+                    committed = true
+                end
+                if uci_cursor:get("xc", "main", "current_id") == nil then
+                    uci_cursor:set("xc", "main", "current_id", "1")
+                    committed = true
+                end
+                -- 同步写出一份 nodes.json 保持双向兼容
+                write_file(NODES_FILE, json.stringify({ version = 1, fixed_proxy_id = 1, nodes = extracted }, 1))
+            end
+        end
+    end
+
+    -- 4. 迁移 current -> uci xc.main.current_id
     local cur_raw = read_file(CURRENT_FILE)
     if cur_raw then
         local cid = cur_raw:match("%d+")
@@ -126,7 +273,7 @@ local function sync_json_compat(nodes_payload, settings_payload)
     end
 end
 
-local APP_VERSION = "1.0.16-1"
+local APP_VERSION = "1.0.17-1"
 
 local methods = {
     get_status = function()

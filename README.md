@@ -39,7 +39,7 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.16-1)
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.17-1)
 ├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
@@ -181,6 +181,16 @@ xc rollback      # 恢复上一份配置
 ---
 
 ## 版本历史与更新日志 (Changelog)
+
+### [v1.0.17-1] - 2026-09-14
+#### 新增特性 & Bug 修复
+- **直接添加 `config.json` 自动解析导入与逆向节点恢复**：
+  - 彻底修复“设备上直接放置/添加 `config.json` 且 Xray 已正常运行，但 Web 插件端看不到任何节点信息”的严重缺陷；
+  - 在 `rpcd/luci.xc` 与核心 CLI `xc` 中新增 `extract_nodes_from_config()` 自动解析引擎；
+  - 启动或访问 Web 界面时，若发现 UCI 尚未录入节点，自动从 `/var/etc/xc/config.json` 或 `/etc/xc/config.json` 中逆向提取全部出站节点（涵盖 VLESS REALITY / TLS、VMess、Trojan、Shadowsocks、SOCKS5 等协议）；
+  - 将解析出的节点自动导入并持久化至 UCI (`/etc/config/xc`) 与兼容 `nodes.json`，自动设置首选固定分流节点，实现零配置即插即用（Zero-Config Auto-Discovery）。
+
+---
 
 ### [v1.0.16-1] - 2026-09-14
 #### 新增特性 & 架构重构

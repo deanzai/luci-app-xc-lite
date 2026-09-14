@@ -37,7 +37,7 @@ APK_VER="${PKG_VER}-r${PKG_REL}"
 cat > "$BUILD_DIR/control/control" << EOF
 Package: luci-app-xc
 Version: ${FULL_VER}
-Depends: luci-base, rpcd, rpcd-mod-file
+Depends: luci-base, rpcd, rpcd-mod-file, libuci-lua
 Section: luci
 Architecture: all
 Maintainer: deanzai
