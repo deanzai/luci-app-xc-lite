@@ -20,9 +20,10 @@ RUN apk add --no-cache python3 curl bash ca-certificates tzdata unzip && \
 # Download and install Xray Core + Loyalsoldier DAT rule assets
 RUN set -ex; \
     ARCH="64"; \
-    if [ "${TARGETARCH}" = "arm64" ]; then ARCH="arm64-v8a"; fi; \
-    if [ "${TARGETARCH}" = "arm" ]; then ARCH="arm32-v7a"; fi; \
-    echo "Fetching Xray-core ${XRAY_VERSION} for ${ARCH}..."; \
+    SYS_ARCH="$(uname -m)"; \
+    if [ "${TARGETARCH}" = "arm64" ] || [ "${SYS_ARCH}" = "aarch64" ]; then ARCH="arm64-v8a"; fi; \
+    if [ "${TARGETARCH}" = "arm" ] || [ "${SYS_ARCH}" = "armv7l" ]; then ARCH="arm32-v7a"; fi; \
+    echo "Fetching Xray-core ${XRAY_VERSION} for ${ARCH} (SYS: ${SYS_ARCH}, TARGET: ${TARGETARCH})..."; \
     curl -sSL --retry 3 -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/Xray-linux-${ARCH}.zip"; \
     unzip -q /tmp/xray.zip -d /tmp/xray; \
     mv /tmp/xray/xray /usr/local/bin/xray; \
