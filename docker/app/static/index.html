@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XC - Xray 节点切换与分流管理器</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- Alpine.js -->
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+</head>
+<body x-data="xcApp()" x-init="init()" x-cloak>
+  <div class="container">
+
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">XC</div>
+        <div>
+          <div class="brand-title">
+            <span>Xray 节点切换与分流管理器</span>
+            <span class="badge badge-info" x-text="status.version || 'Linux Docker'"></span>
+          </div>
+          <div class="brand-sub">轻量级代理核心管理 · 双入站分流与秒级切换</div>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span class="badge" :class="status.running ? 'badge-success' : 'badge-danger'">
+          <span class="dot-pulse" x-show="status.running"></span>
+          <span x-text="status.running ? 'Xray 核心运行中' : 'Xray 核心已停止'"></span>
+        </span>
+        <button class="btn btn-default btn-sm" @click="openSettingsModal()" title="全局参数设置">
+          <svg style="width:14px;height:14px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+          设置
+        </button>
+      </div>
+    </header>
+
+    <!-- Overview Status Card -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">运行状态与出口概览</h2>
+          <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 3px;">
+            当前节点承担普通海外流量与兜底分流；固定代理节点接管 YouTube, Google, OpenAI 等 geosite 分流。
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-default btn-sm" @click="testDualPorts()" :disabled="testingPorts">
+            <svg :class="{'spin': testingPorts}" style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+            <span x-text="testingPorts ? '测试中...' : '测试双端口'"></span>
+          </button>
+
+          <button class="btn btn-warning btn-sm" @click="rollback()" :disabled="rollingBack">
+            <svg style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
+            <span x-text="rollingBack ? '回滚中...' : '回滚上一节点'"></span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Stat Grid -->
+      <div class="stat-grid">
+        <div class="stat-box">
+          <div class="stat-label">当前活跃出口节点</div>
+          <div class="stat-val" style="color: var(--primary)">
+            <span x-text="status.current_node ? '#' + status.current_node.id + ' ' + status.current_node.name : '无'"></span>
+          </div>
+          <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;" x-text="status.current_node ? status.current_node.server + ':' + status.current_node.port : ''"></div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">SOCKS5 代理入站</div>
+          <div class="stat-val">
+            <span>0.0.0.0:</span><span x-text="status.socks_port || 7890"></span>
+            <span class="badge" :class="portTest.socks === 'ok' ? 'badge-success' : (portTest.socks === 'fail' ? 'badge-danger' : 'badge-gray')" x-text="portTest.socks || '待测'"></span>
+          </div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">HTTP 代理入站</div>
+          <div class="stat-val">
+            <span>0.0.0.0:</span><span x-text="status.http_port || 10809"></span>
+            <span class="badge" :class="portTest.http === 'ok' ? 'badge-success' : (portTest.http === 'fail' ? 'badge-danger' : 'badge-gray')" x-text="portTest.http || '待测'"></span>
+          </div>
+        </div>
+
+        <div class="stat-box">
+          <div class="stat-label">Xray 进程状态</div>
+          <div class="stat-val">
+            <span x-text="status.pid ? 'PID: ' + status.pid : '未启动'"></span>
+            <span class="badge badge-info" x-show="status.uptime_seconds" x-text="formatUptime(status.uptime_seconds)"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Node Management Card -->
+    <section class="card">
+      <div class="card-header">
+        <div>
+          <h2 class="card-title">
+            <span>节点列表</span>
+            <span class="badge badge-info" x-text="(nodesData.nodes ? nodesData.nodes.length : 0) + ' 个节点'"></span>
+          </h2>
+        </div>
+
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button class="btn btn-default btn-sm" @click="probeAll()" :disabled="probing">
+            <svg :class="{'spin': probing}" style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            <span x-text="probing ? '全链路并发测速中...' : '并发测全部延迟'"></span>
+          </button>
+          <button class="btn btn-primary btn-sm" @click="openImportModal()">
+            <svg style="width:13px;height:13px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+            批量导入 / 添加节点
+          </button>
+        </div>
+      </div>
+
+      <!-- Node Table -->
+      <div class="table-wrap">
+        <table class="node-table">
+          <thead>
+            <tr>
+              <th style="width: 50px;">#</th>
+              <th>节点名称</th>
+              <th>协议类型</th>
+              <th>服务器地址与端口</th>
+              <th>代理链延迟 (RTT)</th>
+              <th style="width: 190px; text-align: right;">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="n in nodesData.nodes" :key="n.id">
+              <tr :class="{'active-row': n.id === nodesData.current_id}">
+                <td>
+                  <span class="badge badge-gray" style="font-weight:700" x-text="n.id"></span>
+                </td>
+                <td>
+                  <div style="font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                    <span x-text="n.name"></span>
+                    <span class="badge badge-success" x-show="n.id === nodesData.current_id">当前生效</span>
+                    <span class="badge badge-info" x-show="n.id === nodesData.fixed_proxy_id && n.id !== nodesData.current_id">固定分流</span>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge badge-info" x-text="n.type"></span>
+                </td>
+                <td>
+                  <span x-text="n.server + ':' + n.port"></span>
+                </td>
+                <td>
+                  <template x-if="n.latency !== undefined">
+                    <span class="badge" :class="getLatencyClass(n.latency)" x-text="n.latency !== null ? n.latency + ' ms' : '超时 / 失败'"></span>
+                  </template>
+                  <template x-if="n.latency === undefined">
+                    <span class="badge badge-gray">未测试</span>
+                  </template>
+                </td>
+                <td style="text-align: right;">
+                  <button class="btn btn-default btn-sm" @click="probeSingle(n.id)" title="单节点真实测速">
+                    <svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    测速
+                  </button>
+                  <button class="btn btn-primary btn-sm" x-show="n.id !== nodesData.current_id" @click="switchNode(n.id)">
+                    切换
+                  </button>
+                  <button class="btn btn-danger btn-sm" @click="deleteNode(n.id)" title="删除节点">
+                    <svg style="width:11px;height:11px" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  </button>
+                </td>
+              </tr>
+            </template>
+            <template x-if="!nodesData.nodes || nodesData.nodes.length === 0">
+              <tr>
+                <td colspan="6" style="text-align:center; padding: 30px; color: var(--text-muted)">
+                  暂无节点，请点击上方「批量导入 / 添加节点」
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Batch Import Modal -->
+  <div class="modal-bg" x-show="importModalOpen" x-transition>
+    <div class="modal" @click.away="importModalOpen = false">
+      <div class="modal-title">导入分享链接 / 节点 JSON</div>
+      <div class="form-group">
+        <label class="form-label">支持 vless://, vmess://, trojan://, ss://, socks5:// 或 JSON 配置（一行一个，支持批量粘贴）：</label>
+        <textarea class="textarea" x-model="importText" placeholder="vless://...&#10;vmess://...&#10;trojan://..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" @click="importModalOpen = false">取消</button>
+        <button class="btn btn-primary" @click="submitImport()" :disabled="importing">
+          <span x-text="importing ? '解析并导入中...' : '确定导入'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-bg" x-show="settingsModalOpen" x-transition>
+    <div class="modal" @click.away="settingsModalOpen = false">
+      <div class="modal-title">全局与入站设置</div>
+      <div class="form-group">
+        <label class="form-label">SOCKS5 代理端口</label>
+        <input class="input" type="number" x-model.number="settingsForm.socks_port">
+      </div>
+      <div class="form-group">
+        <label class="form-label">HTTP 代理端口</label>
+        <input class="input" type="number" x-model.number="settingsForm.http_port">
+      </div>
+      <div class="form-group">
+        <label class="form-label">日志级别 (LogLevel)</label>
+        <select class="input" x-model="settingsForm.log_level">
+          <option value="warning">warning (静默连接流水，消除系统日志刷屏)</option>
+          <option value="info">info (排查故障，打印实时域名嗅探与路由连接)</option>
+          <option value="error">error (仅严重错误)</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">延迟测速与健康检查目标 URL</label>
+        <input class="input" type="text" x-model="settingsForm.health_url">
+      </div>
+      <div class="form-group">
+        <label class="form-label">并发测速线程数</label>
+        <input class="input" type="number" x-model.number="settingsForm.probe_concurrency">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" @click="settingsModalOpen = false">取消</button>
+        <button class="btn btn-primary" @click="submitSettings()">保存并重载 Xray</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Notification Toast -->
+  <div x-show="toast.show" x-transition style="position: fixed; bottom: 24px; right: 24px; z-index: 200;">
+    <div class="card" :style="toast.type === 'error' ? 'border-left: 4px solid var(--danger)' : 'border-left: 4px solid var(--success)'" style="padding: 12px 18px; margin-bottom: 0; box-shadow: var(--shadow-md);">
+      <div style="font-weight: 600; font-size: 0.85rem;" :style="toast.type === 'error' ? 'color: var(--danger)' : 'color: var(--success)'" x-text="toast.message"></div>
+    </div>
+  </div>
+
+  <script>
+    function xcApp() {
+      return {
+        status: {},
+        nodesData: { nodes: [], current_id: 1, fixed_proxy_id: 1 },
+        portTest: { socks: null, http: null },
+        testingPorts: false,
+        rollingBack: false,
+        probing: false,
+        importModalOpen: false,
+        importText: '',
+        importing: false,
+        settingsModalOpen: false,
+        settingsForm: {},
+        toast: { show: false, message: '', type: 'success' },
+
+        showToast(msg, type = 'success') {
+          this.toast.message = msg;
+          this.toast.type = type;
+          this.toast.show = true;
+          setTimeout(() => { this.toast.show = false; }, 3500);
+        },
+
+        async init() {
+          await this.loadStatus();
+          await this.loadNodes();
+        },
+
+        async loadStatus() {
+          try {
+            const res = await fetch('/api/status');
+            this.status = await res.json();
+          } catch (e) {
+            console.error('Failed to load status', e);
+          }
+        },
+
+        async loadNodes() {
+          try {
+            const res = await fetch('/api/nodes');
+            this.nodesData = await res.json();
+          } catch (e) {
+            console.error('Failed to load nodes', e);
+          }
+        },
+
+        async testDualPorts() {
+          this.testingPorts = true;
+          this.portTest = { socks: '测试中', http: '测试中' };
+          try {
+            const res = await fetch('/api/test', { method: 'POST' });
+            const data = await res.json();
+            this.portTest = { socks: data.socks_status, http: data.http_status };
+            this.showToast(`双端口测试完成: SOCKS=${data.socks_status}, HTTP=${data.http_status}`);
+          } catch (e) {
+            this.showToast('测试接口失败', 'error');
+          } finally {
+            this.testingPorts = false;
+          }
+        },
+
+        async switchNode(nodeId) {
+          try {
+            const res = await fetch('/api/switch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: nodeId })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast(data.message || '切换成功');
+              await this.loadStatus();
+              await this.loadNodes();
+            } else {
+              this.showToast(data.message || '切换失败并自动回滚', 'error');
+              await this.loadStatus();
+              await this.loadNodes();
+            }
+          } catch (e) {
+            this.showToast('请求切换服务失败', 'error');
+          }
+        },
+
+        async rollback() {
+          this.rollingBack = true;
+          try {
+            const res = await fetch('/api/rollback', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast(data.message || '回滚成功');
+              await this.loadStatus();
+              await this.loadNodes();
+            } else {
+              this.showToast(data.message || '回滚失败', 'error');
+            }
+          } catch (e) {
+            this.showToast('回滚请求异常', 'error');
+          } finally {
+            this.rollingBack = false;
+          }
+        },
+
+        async probeAll() {
+          this.probing = true;
+          try {
+            const res = await fetch('/api/probe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ all: true })
+            });
+            const data = await res.json();
+            if (data.success) {
+              await this.loadNodes();
+              this.showToast('全部节点测速完成');
+            }
+          } catch (e) {
+            this.showToast('测速请求失败', 'error');
+          } finally {
+            this.probing = false;
+          }
+        },
+
+        async probeSingle(nodeId) {
+          try {
+            const res = await fetch('/api/probe', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: nodeId })
+            });
+            const data = await res.json();
+            if (data.success) {
+              await this.loadNodes();
+              const lat = data.nodes[0] ? data.nodes[0].latency : null;
+              this.showToast(`节点 #${nodeId} 测速: ${lat !== null ? lat + 'ms' : '超时'}`);
+            }
+          } catch (e) {
+            this.showToast('单节点测速失败', 'error');
+          }
+        },
+
+        openImportModal() {
+          this.importText = '';
+          this.importModalOpen = true;
+        },
+
+        async submitImport() {
+          if (!this.importText.trim()) return;
+          this.importing = true;
+          try {
+            const res = await fetch('/api/nodes', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ raw: this.importText })
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast(`成功导入 ${data.count} 个节点`);
+              this.importModalOpen = false;
+              await this.loadNodes();
+            } else {
+              this.showToast(data.message || '导入解析失败', 'error');
+            }
+          } catch (e) {
+            this.showToast('导入请求失败', 'error');
+          } finally {
+            this.importing = false;
+          }
+        },
+
+        async deleteNode(nodeId) {
+          if (!confirm(`确定要删除编号为 #${nodeId} 的节点吗？`)) return;
+          try {
+            const res = await fetch(`/api/nodes/${nodeId}`, { method: 'DELETE' });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('节点已删除');
+              await this.loadStatus();
+              await this.loadNodes();
+            }
+          } catch (e) {
+            this.showToast('删除失败', 'error');
+          }
+        },
+
+        async openSettingsModal() {
+          try {
+            const res = await fetch('/api/settings');
+            this.settingsForm = await res.json();
+            this.settingsModalOpen = true;
+          } catch (e) {
+            this.showToast('获取设置失败', 'error');
+          }
+        },
+
+        async submitSettings() {
+          try {
+            const res = await fetch('/api/settings', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(this.settingsForm)
+            });
+            const data = await res.json();
+            if (data.success) {
+              this.showToast('设置已保存并平滑重载 Xray');
+              this.settingsModalOpen = false;
+              await this.loadStatus();
+            }
+          } catch (e) {
+            this.showToast('保存设置失败', 'error');
+          }
+        },
+
+        getLatencyClass(latency) {
+          if (latency === null) return 'badge-danger';
+          if (latency < 180) return 'badge-success';
+          if (latency < 400) return 'badge-warning';
+          return 'badge-danger';
+        },
+
+        formatUptime(sec) {
+          if (!sec) return '';
+          const m = Math.floor(sec / 60);
+          const s = sec % 60;
+          if (m < 60) return `${m}分${s}秒`;
+          const h = Math.floor(m / 60);
+          return `${h}时${m % 60}分`;
+        }
+      }
+    }
+  </script>
+</body>
+</html>

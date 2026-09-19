@@ -1,0 +1,22 @@
+services:
+  xc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+    image: xc:latest
+    container_name: xc
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - /etc/xc:/etc/xc
+    environment:
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
