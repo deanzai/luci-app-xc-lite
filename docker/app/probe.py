@@ -65,11 +65,12 @@ def probe_node_xray(node: Dict[str, Any], settings: Dict[str, Any], xray_bin: st
         # Launch background xray probe instance
         env = os.environ.copy()
         proc = subprocess.Popen(
-            [xray_bin, "run", "-c", tmp_file],
+            [xray_bin, "run", "-format=json", "-c", tmp_file],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             env=env
         )
+
 
         # Wait a fraction for port to listen
         time.sleep(0.3)

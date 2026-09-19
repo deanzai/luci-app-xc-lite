@@ -75,7 +75,7 @@ class RuntimeManager:
             if self.asset_dir:
                 env["XRAY_LOCATION_ASSET"] = self.asset_dir
 
-            cmd = [self.xray_bin, "run", "-test", "-c", config_path]
+            cmd = [self.xray_bin, "run", "-test", "-format=json", "-c", config_path]
             res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=10, env=env)
             if res.returncode == 0:
                 return True, "Configuration test passed"
@@ -99,7 +99,7 @@ class RuntimeManager:
                 return False, "No nodes configured"
 
         config_obj = generate_xray_config(settings, nodes_data, active_node)
-        new_tmp = self.storage.config_file + ".new"
+        new_tmp = os.path.join(self.storage.runtime_dir, "config.new.json")
         with open(new_tmp, "w", encoding="utf-8") as f:
             json.dump(config_obj, f, indent=2, ensure_ascii=False)
 
@@ -110,6 +110,7 @@ class RuntimeManager:
             return False, f"Xray configuration validation failed: {msg}"
 
         os.replace(new_tmp, self.storage.config_file)
+
         self.storage.set_current_id(cid)
         return True, "Config generated successfully"
 
@@ -130,7 +131,7 @@ class RuntimeManager:
             if self.asset_dir:
                 env["XRAY_LOCATION_ASSET"] = self.asset_dir
 
-            cmd = [self.xray_bin, "run", "-c", self.storage.config_file]
+            cmd = [self.xray_bin, "run", "-format=json", "-c", self.storage.config_file]
             try:
                 self.process = subprocess.Popen(
                     cmd,
