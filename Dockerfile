@@ -4,13 +4,19 @@ ARG TARGETARCH=amd64
 ARG XRAY_VERSION=v24.11.30
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
+ARG ALL_PROXY=""
 
 ENV http_proxy=${HTTP_PROXY} \
     https_proxy=${HTTPS_PROXY} \
+    all_proxy=${ALL_PROXY} \
+    HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    ALL_PROXY=${ALL_PROXY} \
     XC_DATA_DIR=/etc/xc \
     XRAY_LOCATION_ASSET=/usr/local/share/xray \
     PYTHONUNBUFFERED=1 \
     TZ=Asia/Shanghai
+
 
 WORKDIR /app
 
@@ -44,7 +50,8 @@ RUN chmod +x /app/xc_cli.py && \
     ln -sf /app/xc_cli.py /usr/local/bin/xc
 
 # Clean up proxy environment variables
-ENV http_proxy="" https_proxy="" all_proxy=""
+ENV http_proxy="" https_proxy="" all_proxy="" HTTP_PROXY="" HTTPS_PROXY="" ALL_PROXY=""
+
 
 EXPOSE 7890 10809 7891
 

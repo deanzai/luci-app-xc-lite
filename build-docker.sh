@@ -7,15 +7,34 @@ cd "$DIR"
 IMAGE_NAME="xc:latest"
 CONTAINER_NAME="xc"
 
-# Detect proxy
-PROXY_ARGS=""
-if [ -n "$http_proxy" ]; then
-    PROXY_ARGS="--build-arg HTTP_PROXY=$http_proxy --build-arg HTTPS_PROXY=$https_proxy"
-elif [ -n "$HTTP_PROXY" ]; then
-    PROXY_ARGS="--build-arg HTTP_PROXY=$HTTP_PROXY --build-arg HTTPS_PROXY=$HTTPS_PROXY"
+cmd="${1:-up}"
+PROXY_PARAM="${2:-}"
+
+# Detect or specify proxy
+DETECTED_PROXY="${PROXY_PARAM:-${HTTP_PROXY:-${http_proxy:-${ALL_PROXY:-${all_proxy:-}}}}}"
+
+if [ -z "$DETECTED_PROXY" ]; then
+    # Auto-detect common LAN proxy (e.g. 192.168.6.1:7890)
+    if curl -s --connect-timeout 1 http://192.168.6.1:7890 >/dev/null 2>&1; then
+        DETECTED_PROXY="http://192.168.6.1:7890"
+        echo "==> Auto-detected LAN proxy at http://192.168.6.1:7890"
+    fi
 fi
 
-cmd="${1:-up}"
+PROXY_ARGS=""
+if [ -n "$DETECTED_PROXY" ]; then
+    echo "==> Using proxy for build: $DETECTED_PROXY"
+    export HTTP_PROXY="$DETECTED_PROXY"
+    export HTTPS_PROXY="$DETECTED_PROXY"
+    export ALL_PROXY="$DETECTED_PROXY"
+    export http_proxy="$DETECTED_PROXY"
+    export https_proxy="$DETECTED_PROXY"
+    export all_proxy="$DETECTED_PROXY"
+    PROXY_ARGS="--build-arg HTTP_PROXY=$DETECTED_PROXY --build-arg HTTPS_PROXY=$DETECTED_PROXY --build-arg ALL_PROXY=$DETECTED_PROXY"
+else
+    echo "==> No proxy configured. If GitHub is slow or blocked, run:"
+    echo "    ./build-docker.sh $cmd http://192.168.6.1:7890"
+fi
 
 case "$cmd" in
     build)
@@ -23,6 +42,7 @@ case "$cmd" in
         docker build $PROXY_ARGS -t "$IMAGE_NAME" .
         echo "==> Build successful: $IMAGE_NAME"
         ;;
+
     up|start)
         mkdir -p /etc/xc
         if [ ! -d "/etc/xc" ] || [ ! -w "/etc/xc" ]; then
