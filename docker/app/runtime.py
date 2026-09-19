@@ -1,16 +1,27 @@
 import os
+import re
 import time
 import json
 import socket
 import logging
 import subprocess
 import threading
+from collections import deque
 from typing import Dict, Any, List, Optional, Tuple
 
 from storage import Storage
 from generator import generate_xray_config
 
 logger = logging.getLogger("xc.runtime")
+
+UUID_REGEX = re.compile(r'\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b')
+SENSITIVE_JSON_REGEX = re.compile(r'("(?:publicKey|public_key|password|secret|key|privateKey|shortId|short_id)":\s*")[^"]+(")', re.IGNORECASE)
+
+
+def desensitize_log(line: str) -> str:
+    line = UUID_REGEX.sub("****-****-UUID", line)
+    line = SENSITIVE_JSON_REGEX.sub(r'\1***\2', line)
+    return line
 
 
 class RuntimeManager:
@@ -19,6 +30,8 @@ class RuntimeManager:
         self.process: Optional[subprocess.Popen] = None
         self.start_time: Optional[float] = None
         self.lock = threading.RLock()
+        self.log_lock = threading.Lock()
+        self.log_buffer = deque(maxlen=500)
         self.xray_bin = self.find_xray_binary()
         self.asset_dir = self.find_asset_dir()
         logger.info(f"Using Xray binary: {self.xray_bin}, asset dir: {self.asset_dir}")
@@ -119,10 +132,9 @@ class RuntimeManager:
             if self.is_running():
                 return True, "Already running"
 
-            if not os.path.exists(self.storage.config_file):
-                ok, err = self.generate_active_config()
-                if not ok:
-                    return False, err
+            ok, err = self.generate_active_config()
+            if not ok and not os.path.exists(self.storage.config_file):
+                return False, err
 
             if not self.xray_bin:
                 return False, "xray binary not installed"
@@ -138,6 +150,7 @@ class RuntimeManager:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    bufsize=1,
                     env=env
                 )
                 self.start_time = time.time()
@@ -145,6 +158,8 @@ class RuntimeManager:
                 if self.process.poll() is not None:
                     out = self.process.stdout.read() if self.process.stdout else "Process exited immediately"
                     return False, f"Failed to start Xray: {out}"
+
+                threading.Thread(target=self._log_reader_worker, args=(self.process,), daemon=True).start()
                 return True, "Started Xray process"
             except Exception as e:
                 return False, f"Execution failed: {e}"
@@ -287,10 +302,77 @@ class RuntimeManager:
             "http_status": "ok" if http_ok else "fail"
         }
 
+    def _log_reader_worker(self, proc: subprocess.Popen):
+        try:
+            if not proc.stdout:
+                return
+            for line in iter(proc.stdout.readline, ''):
+                if not line:
+                    break
+                raw = line.rstrip()
+                clean = desensitize_log(raw)
+                lvl = "info"
+                lower = clean.lower()
+                if "[warning]" in lower or "warn" in lower:
+                    lvl = "warning"
+                elif "[error]" in lower or "failed" in lower or "fatal" in lower:
+                    lvl = "error"
+                elif "[debug]" in lower:
+                    lvl = "debug"
+
+                with self.log_lock:
+                    self.log_buffer.append({
+                        "time": time.strftime("%H:%M:%S"),
+                        "level": lvl,
+                        "raw": clean
+                    })
+        except Exception:
+            pass
+
+    def get_logs(self, level: str = "all", limit: int = 200) -> List[Dict[str, Any]]:
+        with self.log_lock:
+            logs = list(self.log_buffer)
+        if level and level.lower() != "all":
+            logs = [entry for entry in logs if entry.get("level") == level.lower()]
+        return logs[-limit:]
+
+    def clear_logs(self):
+        with self.log_lock:
+            self.log_buffer.clear()
+
+    def refresh_paths(self):
+        with self.lock:
+            self.xray_bin = self.find_xray_binary()
+            self.asset_dir = self.find_asset_dir()
+            logger.info(f"Refreshed Xray binary: {self.xray_bin}, asset dir: {self.asset_dir}")
+
+    def restart_service(self) -> Tuple[bool, str]:
+        with self.lock:
+            ok, err = self.generate_active_config()
+            if not ok:
+                return False, f"Config generation error: {err}"
+            return self.restart()
+
+    def set_fixed_proxy_id(self, node_id: Optional[int]) -> Tuple[bool, str]:
+        with self.lock:
+            if node_id is not None:
+                node = self.storage.get_node_by_id(node_id)
+                if not node:
+                    return False, f"Node with ID {node_id} not found"
+            self.storage.set_fixed_proxy_id(node_id)
+            ok, err = self.generate_active_config()
+            if not ok:
+                return False, f"Failed to regenerate config: {err}"
+            if self.is_running():
+                return self.restart()
+            return True, f"Fixed split node set to #{node_id}"
+
     def get_status(self) -> Dict[str, Any]:
         running = self.is_running()
         current_id = self.storage.get_current_id()
         current_node = self.storage.get_node_by_id(current_id)
+        fixed_id = self.storage.get_fixed_proxy_id()
+        fixed_node = self.storage.get_node_by_id(fixed_id) if fixed_id else None
 
         uptime = 0
         pid = None
@@ -307,9 +389,12 @@ class RuntimeManager:
             "uptime_seconds": uptime,
             "current_id": current_id,
             "current_node": current_node,
+            "fixed_proxy_id": fixed_id,
+            "fixed_node": fixed_node,
             "socks_port": int(settings.get("socks_port", 7890)),
             "http_port": int(settings.get("http_port", 10809)),
             "web_port": int(settings.get("web_port", 7891)),
             "xray_bin": self.xray_bin,
             "asset_dir": self.asset_dir
         }
+

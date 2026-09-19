@@ -5,8 +5,10 @@ import shutil
 import tempfile
 import unittest
 
-# Add docker/app to sys.path
+# Add docker/app or app to sys.path
 APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "docker", "app"))
+if not os.path.exists(APP_DIR):
+    APP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "app"))
 if APP_DIR not in sys.path:
     sys.path.insert(0, APP_DIR)
 
@@ -113,8 +115,6 @@ class TestXCGenerator(unittest.TestCase):
         inbound_tags = [ib["tag"] for ib in cfg["inbounds"]]
         self.assertIn("socks-in", inbound_tags)
         self.assertIn("http-in", inbound_tags)
-        self.assertIn("socks-in-loopback", inbound_tags)
-        self.assertIn("http-in-loopback", inbound_tags)
 
         # Verify outbounds
         outbound_tags = [ob["tag"] for ob in cfg["outbounds"]]
@@ -124,11 +124,11 @@ class TestXCGenerator(unittest.TestCase):
         self.assertIn("block", outbound_tags)
 
         # Verify routing
-        self.assertEqual(cfg["routing"]["domainStrategy"], "IPIfNonMatch")
-        self.assertTrue(len(cfg["routing"]["rules"]) > 5)
+        self.assertEqual(cfg["routing"]["domainStrategy"], "AsIs")
+        self.assertTrue(len(cfg["routing"]["rules"]) >= 9)
 
         # Verify DNS
-        self.assertTrue(len(cfg["dns"]["servers"]) >= 3)
+        self.assertTrue(len(cfg["dns"]["servers"]) >= 1)
 
 
 class TestXCAPIServer(unittest.TestCase):
@@ -186,7 +186,90 @@ class TestXCAPIServer(unittest.TestCase):
             data = json.loads(resp.read().decode())
             self.assertEqual(data["log_level"], "warning")
 
+        # 5. POST /api/fixed (set split node)
+        req_fixed = urllib.request.Request(
+            f"{base}/fixed",
+            data=json.dumps({"id": 1}).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req_fixed) as resp:
+            data = json.loads(resp.read().decode())
+            self.assertTrue(data["success"])
+            self.assertEqual(data["fixed_proxy_id"], 1)
+
+        # 6. PUT /api/nodes/1 (edit node)
+        req_edit = urllib.request.Request(
+            f"{base}/nodes/1",
+            data=json.dumps({"name": "RenamedNode", "type": "VLESS REALITY", "server": "8.8.8.8", "port": 443}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="PUT"
+        )
+        with urllib.request.urlopen(req_edit) as resp:
+            data = json.loads(resp.read().decode())
+            self.assertTrue(data["success"])
+            self.assertEqual(data["node"]["name"], "RenamedNode")
+
+        # 7. GET /api/core & GET /api/assets
+        with urllib.request.urlopen(f"{base}/core") as resp:
+            data = json.loads(resp.read().decode())
+            self.assertIn("system_arch", data)
+
+        with urllib.request.urlopen(f"{base}/assets") as resp:
+            data = json.loads(resp.read().decode())
+            self.assertIn("active_source", data)
+
+        # 8. GET /api/logs
+        with urllib.request.urlopen(f"{base}/logs") as resp:
+            data = json.loads(resp.read().decode())
+            self.assertIn("logs", data)
+
+
+class TestCoreAndAssetManager(unittest.TestCase):
+    def setUp(self):
+        self.test_dir = tempfile.mkdtemp(prefix="xc_core_test_")
+        from coremanager import CoreManager
+        from assetmanager import AssetManager
+        self.core_mgr = CoreManager(self.test_dir)
+        self.asset_mgr = AssetManager(self.test_dir)
+
+    def tearDown(self):
+        shutil.rmtree(self.test_dir, ignore_errors=True)
+
+    def test_core_status(self):
+        st = self.core_mgr.get_status()
+        self.assertIn("system_arch", st)
+        self.assertIn("has_custom", st)
+
+    def test_asset_status_and_upload(self):
+        st = self.asset_mgr.get_status()
+        self.assertIn("active_source", st)
+
+        # Create dummy geosite.dat > 10KB
+        dummy_file = os.path.join(self.test_dir, "dummy_geosite.dat")
+        with open(dummy_file, "wb") as f:
+            f.write(b"0" * 20000)
+
+        ok, msg = self.asset_mgr.activate_uploaded_asset("geosite.dat", dummy_file)
+        self.assertTrue(ok)
+        self.assertTrue(os.path.isfile(os.path.join(self.test_dir, "assets", "geosite.dat")))
+
+        # Test rollback
+        ok, msg = self.asset_mgr.rollback()
+        # Since no previous existed before this first activate, rollback returns False safely
+        self.assertFalse(ok)
+
+
+class TestLogDesensitization(unittest.TestCase):
+    def test_desensitize(self):
+        from runtime import desensitize_log
+        raw = '2026/09/19 [Info] proxy to node with uuid 12345678-1234-5678-1234-567812345678, "publicKey": "mySecretPublicKey"'
+        clean = desensitize_log(raw)
+        self.assertNotIn("12345678-1234-5678-1234-567812345678", clean)
+        self.assertIn("****-****-UUID", clean)
+        self.assertNotIn("mySecretPublicKey", clean)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

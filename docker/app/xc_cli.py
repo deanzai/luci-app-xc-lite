@@ -175,6 +175,104 @@ def cmd_probe(arg: str = "all"):
             print(f"  #{n.get('id'):>2} {n.get('name'):<26} : {lat_str}")
 
 
+def cmd_restart():
+    print("Restarting XC & Xray service...")
+    res = api_call("/restart", method="POST")
+    if res and res.get("success"):
+        print(f"[OK] {res.get('message')}")
+    else:
+        msg = res.get("message") if res else "API call failed"
+        print(f"[ERROR] Failed to restart service: {msg}")
+        sys.exit(1)
+
+
+def cmd_fixed(node_id: int):
+    print(f"Setting fixed split-routing node to #{node_id}...")
+    res = api_call("/fixed", method="POST", data={"id": node_id})
+    if res and res.get("success"):
+        print(f"[OK] {res.get('message')}")
+    else:
+        msg = res.get("message") if res else "API call failed"
+        print(f"[ERROR] Failed to set fixed node: {msg}")
+        sys.exit(1)
+
+
+def cmd_core(action: str = "status"):
+    if action == "status":
+        res = api_call("/core")
+        if not res:
+            print("[ERROR] Failed to fetch Xray-core status")
+            return
+        print(f"Xray Core Status:")
+        print(f"  System Arch:    {res.get('system_arch')}")
+        print(f"  Active Binary:  {res.get('active_binary')} (v{res.get('active_version', 'Unknown')})")
+        print(f"  Active Source:  {res.get('active_source')}")
+        print(f"  Builtin Core:   {res.get('has_builtin')} (v{res.get('builtin_version', '--')})")
+        print(f"  Custom Core:    {res.get('has_custom')} (v{res.get('custom_version', '--')})")
+        print(f"  Previous Core:  {res.get('has_previous')} (v{res.get('previous_version', '--')})")
+    elif action == "rollback":
+        print("Rolling back to previous Xray-core...")
+        res = api_call("/core/rollback", method="POST")
+        if res and res.get("success"):
+            print(f"[OK] {res.get('message')}")
+        else:
+            msg = res.get("message") if res else "Failed"
+            print(f"[ERROR] {msg}")
+
+
+def cmd_asset(action: str = "status"):
+    if action == "status":
+        res = api_call("/assets")
+        if not res:
+            print("[ERROR] Failed to fetch Geo rule asset status")
+            return
+        print(f"Geo Rules Status:")
+        print(f"  Active Source:  {res.get('active_source')}")
+        print(f"  Active Dir:     {res.get('active_dir')}")
+        gs = res.get("geosite") or {}
+        gi = res.get("geoip") or {}
+        print(f"  geosite.dat:    {gs.get('size_formatted', '--')} (Modified: {gs.get('modified', '--')})")
+        print(f"  geoip.dat:      {gi.get('size_formatted', '--')} (Modified: {gi.get('modified', '--')})")
+        print(f"  Custom Dir:     {res.get('custom_dir')}")
+        print(f"  Has Rollback:   {res.get('has_previous')}")
+    elif action == "update":
+        print("Updating Loyalsoldier rules from GitHub...")
+        res = api_call("/assets/update", method="POST")
+        if res and res.get("success"):
+            print(f"[OK] {res.get('message')}")
+        else:
+            msg = res.get("message") if res else "Failed"
+            print(f"[ERROR] {msg}")
+    elif action == "rollback":
+        print("Rolling back to previous Geo rule assets...")
+        res = api_call("/assets/rollback", method="POST")
+        if res and res.get("success"):
+            print(f"[OK] {res.get('message')}")
+        else:
+            msg = res.get("message") if res else "Failed"
+            print(f"[ERROR] {msg}")
+
+
+def cmd_log(limit: int = 50):
+    res = api_call(f"/logs?limit={limit}")
+    if not res:
+        print("[ERROR] Failed to fetch logs")
+        return
+    logs = res.get("logs", [])
+    if not logs:
+        print("No recent log entries")
+        return
+    print(f"--- Recent {len(logs)} Xray Log Entries ---")
+    for item in logs:
+        if isinstance(item, dict):
+            t = item.get("time", "")
+            lvl = item.get("level", "info").upper()
+            raw = item.get("raw", "")
+            print(f"[{t}] [{lvl:5}] {raw}")
+        else:
+            print(str(item))
+
+
 def print_help():
     print("""xc - Xray Node & Routing Switcher CLI (Linux Docker Edition)
 
@@ -182,11 +280,16 @@ Usage:
   xc status              Output service running status and current node
   xc list                List all available nodes and latency
   xc <id>                Quick switch to node by ID (e.g. xc 1)
-  xc switch <id>         Switch outbound to specified node
+  xc switch <id>         Switch outbound to specified node (with rollback)
+  xc fixed <id>          Set fixed split-routing node ID (e.g. xc fixed 2)
+  xc restart             Restart Xray service
   xc current             Display currently active node details
   xc probe [id|all]      Test node latency (default: all nodes)
   xc test                Test SOCKS5 & HTTP inbound connectivity
   xc rollback            Rollback to previous working configuration
+  xc core [status|rollback]   Manage Xray-core binary
+  xc asset [status|update|rollback] Manage Geo rule assets
+  xc log [-n <limit>]    View real-time desensitized logs (default: 50)
   xc help                Display this help message
 """)
 
@@ -206,6 +309,13 @@ def main():
         cmd_list()
     elif arg1 == "current":
         cmd_current()
+    elif arg1 == "restart":
+        cmd_restart()
+    elif arg1 == "fixed":
+        if len(sys.argv) < 3 or not sys.argv[2].isdigit():
+            print("Error: Please specify valid node ID. Usage: xc fixed <id>")
+            sys.exit(1)
+        cmd_fixed(int(sys.argv[2]))
     elif arg1 == "rollback":
         cmd_rollback()
     elif arg1 == "test":
@@ -213,6 +323,19 @@ def main():
     elif arg1 == "probe":
         arg2 = sys.argv[2] if len(sys.argv) > 2 else "all"
         cmd_probe(arg2)
+    elif arg1 == "core":
+        sub = sys.argv[2].lower() if len(sys.argv) > 2 else "status"
+        cmd_core(sub)
+    elif arg1 == "asset":
+        sub = sys.argv[2].lower() if len(sys.argv) > 2 else "status"
+        cmd_asset(sub)
+    elif arg1 == "log":
+        limit = 50
+        if len(sys.argv) >= 4 and sys.argv[2] in ("-n", "--lines") and sys.argv[3].isdigit():
+            limit = int(sys.argv[3])
+        elif len(sys.argv) >= 3 and sys.argv[2].isdigit():
+            limit = int(sys.argv[2])
+        cmd_log(limit)
     elif arg1 == "switch":
         if len(sys.argv) < 3 or not sys.argv[2].isdigit():
             print("Error: Please specify valid node ID. Usage: xc switch <id>")
@@ -228,3 +351,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

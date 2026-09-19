@@ -149,6 +149,30 @@ class Storage:
             if os.path.exists(self.current_file):
                 shutil.copyfile(self.current_file, self.prev_current_file)
 
+    def update_node(self, node_id: int, updated_fields: Dict[str, Any]) -> bool:
+        with self._lock:
+            data = self.get_nodes_data()
+            nodes = data.get("nodes", [])
+            for i, n in enumerate(nodes):
+                if n.get("id") == node_id:
+                    updated_fields["id"] = node_id
+                    nodes[i] = updated_fields
+                    data["nodes"] = nodes
+                    self.save_nodes_data(data)
+                    return True
+            return False
+
+    def get_fixed_proxy_id(self) -> Optional[int]:
+        with self._lock:
+            data = self.get_nodes_data()
+            return data.get("fixed_proxy_id")
+
+    def set_fixed_proxy_id(self, fixed_id: Optional[int]):
+        with self._lock:
+            data = self.get_nodes_data()
+            data["fixed_proxy_id"] = fixed_id
+            self.save_nodes_data(data)
+
     def rollback_runtime_state(self) -> bool:
         with self._lock:
             restored = False

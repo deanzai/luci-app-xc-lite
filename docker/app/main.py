@@ -12,6 +12,8 @@ from storage import Storage
 from runtime import RuntimeManager
 from probe import probe_all_nodes, probe_single_node
 from importer import import_nodes_from_text
+from coremanager import CoreManager
+from assetmanager import AssetManager
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,6 +24,8 @@ logger = logging.getLogger("xc.server")
 # Global managers
 storage = Storage()
 runtime = RuntimeManager(storage)
+core_manager = CoreManager(storage.data_dir)
+asset_manager = AssetManager(storage.data_dir)
 cached_latencies: Dict[int, int] = {}
 recent_logs: list = []
 
@@ -57,7 +61,7 @@ class XCRequestHandler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", 0))
             if length <= 0:
                 return {}
-            raw = self.wfile.read(length) if hasattr(self, "wfile_read") else self.rfile.read(length)
+            raw = self.rfile.read(length)
             return json.loads(raw.decode("utf-8"))
         except Exception:
             return {}
@@ -68,6 +72,9 @@ class XCRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
         self.end_headers()
+
+    def do_HEAD(self):
+        self.do_GET()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -89,7 +96,7 @@ class XCRequestHandler(BaseHTTPRequestHandler):
             self.send_json({
                 "nodes": nodes,
                 "current_id": storage.get_current_id(),
-                "fixed_proxy_id": nodes_data.get("fixed_proxy_id", 1)
+                "fixed_proxy_id": storage.get_fixed_proxy_id()
             })
             return
 
@@ -98,7 +105,19 @@ class XCRequestHandler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/logs":
-            self.send_json({"logs": recent_logs})
+            params = parse_qs(parsed.query)
+            level = params.get("level", ["all"])[0]
+            limit = int(params.get("limit", [200])[0])
+            logs = runtime.get_logs(level=level, limit=limit)
+            self.send_json({"logs": logs})
+            return
+
+        if path == "/api/core":
+            self.send_json(core_manager.get_status())
+            return
+
+        if path == "/api/assets":
+            self.send_json(asset_manager.get_status())
             return
 
         # Static files
@@ -117,6 +136,23 @@ class XCRequestHandler(BaseHTTPRequestHandler):
             ok, msg = runtime.switch_node(int(target_id))
             log_event(f"Switch node #{target_id}: {msg}")
             self.send_json({"success": ok, "message": msg, "current_id": storage.get_current_id()})
+            return
+
+        if path == "/api/fixed":
+            body = self.read_json_body()
+            target_id = body.get("id")
+            if target_id is None:
+                self.send_json({"success": False, "message": "Missing node id"}, status=400)
+                return
+            ok, msg = runtime.set_fixed_proxy_id(int(target_id) if target_id else None)
+            log_event(f"Set fixed split node #{target_id}: {msg}")
+            self.send_json({"success": ok, "message": msg, "fixed_proxy_id": storage.get_fixed_proxy_id()})
+            return
+
+        if path == "/api/restart":
+            ok, msg = runtime.restart_service()
+            log_event(f"Restart service: {msg}")
+            self.send_json({"success": ok, "message": msg, "status": runtime.get_status()})
             return
 
         if path == "/api/rollback":
@@ -196,9 +232,92 @@ class XCRequestHandler(BaseHTTPRequestHandler):
             self.send_json({"success": True, "settings": cur})
             return
 
-        if path == "/api/restart":
-            ok, msg = runtime.restart()
-            self.send_json({"success": ok, "message": msg})
+        if path == "/api/core/download":
+            body = self.read_json_body()
+            ver = body.get("version", "v24.11.30")
+            proxy = body.get("proxy", "http://192.168.6.1:7890")
+            log_event(f"Downloading Xray-core {ver} from GitHub...")
+            ok, msg = core_manager.download_github_release(ver, proxy=proxy)
+            if ok:
+                runtime.refresh_paths()
+                runtime.restart()
+            log_event(f"Core download result: {msg}")
+            self.send_json({"success": ok, "message": msg, "status": core_manager.get_status()})
+            return
+
+        if path == "/api/core/upload":
+            body = self.read_json_body()
+            content_b64 = body.get("content_base64")
+            if not content_b64:
+                self.send_json({"success": False, "message": "Missing file content"}, status=400)
+                return
+            import base64, tempfile
+            try:
+                raw_bytes = base64.b64decode(content_b64)
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    tf.write(raw_bytes)
+                    temp_path = tf.name
+                ok, msg = core_manager.activate_uploaded_file(temp_path)
+                if ok:
+                    runtime.refresh_paths()
+                    runtime.restart()
+                log_event(f"Core upload result: {msg}")
+                self.send_json({"success": ok, "message": msg, "status": core_manager.get_status()})
+            except Exception as e:
+                self.send_json({"success": False, "message": f"Upload processing failed: {e}"}, status=500)
+            return
+
+        if path == "/api/core/rollback":
+            ok, msg = core_manager.rollback()
+            if ok:
+                runtime.refresh_paths()
+                runtime.restart()
+            log_event(f"Core rollback result: {msg}")
+            self.send_json({"success": ok, "message": msg, "status": core_manager.get_status()})
+            return
+
+        if path == "/api/assets/update":
+            body = self.read_json_body()
+            proxy = body.get("proxy", "http://192.168.6.1:7890")
+            log_event("Updating Loyalsoldier rules from GitHub...")
+            ok, msg = asset_manager.download_loyalsoldier_rules(proxy=proxy)
+            if ok:
+                runtime.refresh_paths()
+                runtime.restart()
+            log_event(f"Rules update result: {msg}")
+            self.send_json({"success": ok, "message": msg, "status": asset_manager.get_status()})
+            return
+
+        if path == "/api/assets/upload":
+            body = self.read_json_body()
+            filename = body.get("filename", "")
+            content_b64 = body.get("content_base64")
+            if not content_b64:
+                self.send_json({"success": False, "message": "Missing file content"}, status=400)
+                return
+            import base64, tempfile
+            try:
+                raw_bytes = base64.b64decode(content_b64)
+                with tempfile.NamedTemporaryFile(delete=False) as tf:
+                    tf.write(raw_bytes)
+                    temp_path = tf.name
+                ok, msg = asset_manager.activate_uploaded_asset(filename, temp_path)
+                if ok:
+                    runtime.refresh_paths()
+                    runtime.restart()
+                log_event(f"Asset upload result: {msg}")
+                self.send_json({"success": ok, "message": msg, "status": asset_manager.get_status()})
+            except Exception as e:
+                self.send_json({"success": False, "message": f"Upload processing failed: {e}"}, status=500)
+            return
+
+        if path == "/api/assets/rollback":
+            ok, msg = asset_manager.rollback()
+            if ok:
+                runtime.refresh_paths()
+                runtime.restart()
+            log_event(f"Asset rollback result: {msg}")
+            self.send_json({"success": ok, "message": msg, "status": asset_manager.get_status()})
             return
 
         self.send_json({"error": "Not Found"}, status=404)
@@ -223,10 +342,11 @@ class XCRequestHandler(BaseHTTPRequestHandler):
                 if found:
                     nodes_data["nodes"] = nodes
                     storage.save_nodes_data(nodes_data)
-                    # If edited active node, reload config
-                    if nid == storage.get_current_id():
+                    # If edited active node or fixed node, reload config
+                    if nid == storage.get_current_id() or nid == storage.get_fixed_proxy_id():
                         runtime.generate_active_config()
                         runtime.restart()
+                    log_event(f"Updated node #{nid} {body.get('name')}")
                     self.send_json({"success": True, "node": body})
                 else:
                     self.send_json({"success": False, "message": "Node not found"}, status=404)
@@ -237,6 +357,13 @@ class XCRequestHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
+
+        if path == "/api/logs":
+            runtime.clear_logs()
+            recent_logs.clear()
+            self.send_json({"success": True, "message": "Logs cleared"})
+            return
+
         if path.startswith("/api/nodes/"):
             node_id_str = path[len("/api/nodes/"):]
             if node_id_str.isdigit():

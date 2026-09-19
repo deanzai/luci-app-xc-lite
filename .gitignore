@@ -23,6 +23,8 @@ local.txt
 *.code-workspace
 .tools/
 tests/tmp/
+scratch*
+release-docker/
 
 # Python cache
 __pycache__/

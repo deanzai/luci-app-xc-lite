@@ -4,6 +4,11 @@ from typing import Dict, Any, List, Optional, Tuple
 PRESET_ROUTING_RULES = [
     {
         "type": "field",
+        "inboundTag": ["dns-proxy"],
+        "outboundTag": "proxy-selected"
+    },
+    {
+        "type": "field",
         "domain": ["geosite:category-ads-all"],
         "outboundTag": "block"
     },
@@ -19,18 +24,11 @@ PRESET_ROUTING_RULES = [
     },
     {
         "type": "field",
-        "domain": [
-            "full:ik.chenmandi.eu.org",
-            "domain:chenmandi.eu.org",
-            "full:atls4.778688.xyz",
-            "domain:778688.xyz"
-        ],
         "ip": [
             "192.168.0.0/16",
             "10.0.0.0/8",
             "172.16.0.0/12",
-            "120.237.86.198",
-            "104.224.159.174"
+            "127.0.0.0/8"
         ],
         "outboundTag": "direct"
     },
@@ -64,54 +62,21 @@ PRESET_ROUTING_RULES = [
         "type": "field",
         "domain": ["geosite:cn"],
         "outboundTag": "direct"
-    },
-    {
-        "type": "field",
-        "domain": [
-            "full:publicwsldistros.blob.core.windows.net",
-            "full:services.googleapis.cn",
-            "full:registry-1.docker.io",
-            "full:www.cpu-monkey.com",
-            "domain:armbian.org",
-            "domain:armbian.com",
-            "domain:cpu-monkey.com",
-            "domain:vsean.net"
-        ],
-        "outboundTag": "proxy-selected"
     }
 ]
 
-DNS_SERVERS = [
-    {
-        "address": "https://8.8.8.8/dns-query",
-        "domains": [
-            "geosite:geolocation-!cn",
-            "geosite:openai",
-            "geosite:youtube",
-            "geosite:twitter",
-            "geosite:telegram",
-            "geosite:tiktok",
-            "geosite:netflix",
-            "geosite:google",
-            "geosite:facebook"
-        ],
-        "skipFallback": True
-    },
-    {
-        "address": "223.5.5.5",
-        "domains": ["geosite:cn"],
-        "skipFallback": True
-    },
-    {
-        "address": "localhost",
-        "domains": ["geosite:private"],
-        "skipFallback": True
-    },
-    {
-        "address": "https://1.1.1.1/dns-query",
-        "skipFallback": False
-    }
-]
+DNS_CONFIG = {
+    "servers": [
+        {
+            "queryStrategy": "UseIPv4",
+            "skipFallback": True,
+            "tag": "dns-proxy",
+            "address": "https://1.1.1.1/dns-query"
+        }
+    ],
+    "queryStrategy": "UseIPv4",
+    "disableFallback": True
+}
 
 
 def build_stream_settings(node: Dict[str, Any]) -> Dict[str, Any]:
@@ -153,15 +118,13 @@ def build_stream_settings(node: Dict[str, Any]) -> Dict[str, Any]:
         stream["tlsSettings"] = tls_settings
     elif security == "reality":
         reality_settings = {
+            "show": False,
             "serverName": node.get("sni") or node.get("server"),
-            "publicKey": node.get("public_key", "")
+            "publicKey": node.get("public_key", ""),
+            "shortId": node.get("short_id", ""),
+            "spiderX": node.get("spider_x") or "/",
+            "fingerprint": node.get("fingerprint") or "chrome"
         }
-        if node.get("short_id"):
-            reality_settings["shortId"] = node.get("short_id")
-        if node.get("fingerprint"):
-            reality_settings["fingerprint"] = node.get("fingerprint")
-        if node.get("spider_x"):
-            reality_settings["spiderX"] = node.get("spider_x")
         stream["realitySettings"] = reality_settings
 
     return stream
@@ -265,7 +228,7 @@ def generate_xray_config(settings: Dict[str, Any], nodes_data: Dict[str, Any], a
     sniffing = {
         "enabled": True,
         "routeOnly": True,
-        "destOverride": ["http", "tls"]
+        "destOverride": ["http", "tls", "quic"]
     }
 
     inbounds = [
@@ -286,8 +249,8 @@ def generate_xray_config(settings: Dict[str, Any], nodes_data: Dict[str, Any], a
         }
     ]
 
-    # If main listener is not 127.0.0.1, also add 127.0.0.1 loopback inbounds
-    if listen_host not in ("127.0.0.1", "::1", "[::1]"):
+    # If main listener is bound to a specific non-wildcard IP, also add 127.0.0.1 loopback inbounds
+    if listen_host not in ("0.0.0.0", "::", "[::]", "127.0.0.1", "::1", "[::1]"):
         inbounds.extend([
             {
                 "tag": "socks-in-loopback",
@@ -337,12 +300,10 @@ def generate_xray_config(settings: Dict[str, Any], nodes_data: Dict[str, Any], a
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {
-            "domainStrategy": "IPIfNonMatch",
+            "domainStrategy": "AsIs",
             "rules": copy.deepcopy(PRESET_ROUTING_RULES)
         },
-        "dns": {
-            "servers": copy.deepcopy(DNS_SERVERS)
-        }
+        "dns": copy.deepcopy(DNS_CONFIG)
     }
 
     return config
