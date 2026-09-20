@@ -23,9 +23,13 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-ROUTER_PASS="ljx@0931"
-STAGING_ROUTER="192.168.6.1"
-PROD_ROUTERS=("192.168.93.94" "192.168.13.1")
+ROUTER_PASS="${ROUTER_PASS:-}"
+STAGING_ROUTER="${STAGING_ROUTER:-192.168.6.1}"
+PROD_ROUTERS=("${PROD_ROUTERS[@]:-192.168.93.94 192.168.13.1}")
+
+if [ -z "$ROUTER_PASS" ]; then
+    echo -e "${YELLOW}提示: 未预设 ROUTER_PASS 环境变量。如需执行远程发布或真机验证，请预先导出 ROUTER_PASS。${NC}"
+fi
 
 step() {
     echo -e "\n${BOLD}${CYAN}>>> [步骤 $1] $2${NC}"
@@ -67,6 +71,11 @@ SSH_OPTS="-o StrictHostKeyChecking=no -o HostKeyAlgorithms=+ssh-rsa -o PubkeyAcc
 # 步骤 3: 仅预发布部署至 Staging 预发布机
 # ------------------------------------------------------------------------------
 step "3/5" "单机灰度预发布至 Staging 验证机 (${STAGING_ROUTER})"
+if [ -z "$ROUTER_PASS" ]; then
+    echo -e "${RED}错误: 远程发布必须提供 ROUTER_PASS 环境变量！${NC}"
+    echo -e "用法示例: ROUTER_PASS='your_password' ./scripts/release.sh"
+    exit 1
+fi
 echo "推送 ${IPK_NAME} 到 ${STAGING_ROUTER}:/tmp/ ..."
 sshpass -p "$ROUTER_PASS" scp $SSH_OPTS "$IPK_PATH" "root@${STAGING_ROUTER}:/tmp/"
 

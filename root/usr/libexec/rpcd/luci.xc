@@ -54,6 +54,16 @@ local function output_json(tbl)
     io.write(json.stringify(tbl or {}, 1) .. "\n")
 end
 
+local function sanitize_output(val)
+    if type(val) ~= "string" then return "" end
+    if #val > 2048 then val = val:sub(1, 2048) end
+    val = val:gsub("%x%x%x%x%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%-%x%x%x%x%x%x%x%x%x%x%x%x", "[redacted]")
+    val = val:gsub("([Pp][Aa][Ss][Ss][Ww][Oo]?[Rr]?[Dd]?[%s:=]+)[^\r\n%s,;]+", "%1[redacted]")
+    val = val:gsub("([Tt][Oo][Kk][Ee][Nn][%s:=]+)[^\r\n%s,;]+", "%1[redacted]")
+    val = val:gsub("([Ss][Ee][Cc][Rr][Ee][Tt][%s:=]+)[^\r\n%s,;]+", "%1[redacted]")
+    return val
+end
+
 local CONFIG_FILE = "/var/etc/xc/config.json"
 local COMPAT_CONFIG = ROOT .. "/config.json"
 
@@ -338,7 +348,7 @@ local methods = {
         local ret = os.execute("/usr/bin/xc switch " .. tostring(id) .. " >" .. tmp_log .. " 2>&1")
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
-        output_json({ code = (ret == 0) and 0 or 1, message = out })
+        output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
     end,
 
     probe_node = function(params)
@@ -504,6 +514,8 @@ local methods = {
     switch_source = function(params)
         local core_src = params and params.core_source and tostring(params.core_source)
         local asset_src = params and params.asset_source and tostring(params.asset_source)
+        if core_src and core_src ~= "builtin" and core_src ~= "custom" then core_src = nil end
+        if asset_src and asset_src ~= "builtin" and asset_src ~= "custom" then asset_src = nil end
 
         if uci_cursor then
             migrate_to_uci()
@@ -548,7 +560,7 @@ local methods = {
         local ret = os.execute("/usr/bin/xc test >" .. tmp_log .. " 2>&1")
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
-        output_json({ code = (ret == 0) and 0 or 1, message = out })
+        output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
     end,
 
     get_settings = function()
@@ -664,7 +676,7 @@ local methods = {
         local ret = os.execute("/usr/bin/xc restart >" .. tmp_log .. " 2>&1")
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
-        output_json({ code = (ret == 0) and 0 or 1, message = out })
+        output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
     end,
 
     stop_service = function()

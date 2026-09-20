@@ -172,7 +172,6 @@ function act_upload(target_type)
         upload_type = raw_type:gsub("^%s+", ""):gsub("%s+$", ""):lower()
     end
 
-    luci.http.header("Access-Control-Allow-Origin", "*")
     luci.http.prepare_content("application/json")
 
     if upload_err then

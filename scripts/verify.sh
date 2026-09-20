@@ -18,8 +18,8 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-STAGING_HOST="192.168.6.1"
-STAGING_PASS="ljx@0931"
+STAGING_HOST="${STAGING_HOST:-192.168.6.1}"
+STAGING_PASS="${STAGING_PASS:-${ROUTER_PASS:-}}"
 
 MODE="${1:---local}"
 TOTAL_TESTS=0
@@ -190,6 +190,10 @@ run_local_tests() {
 # Staging 真机回归验证 (Level 3 on 192.168.6.1)
 # ==============================================================================
 run_staging_tests() {
+    if [ -z "$STAGING_PASS" ]; then
+        fail "执行真机回归测试必须提供 STAGING_PASS 或 ROUTER_PASS 环境变量！" "示例: STAGING_PASS='your_password' ./scripts/verify.sh --staging"
+        return 1
+    fi
     info "6. Staging 预发布机网络与 SSH 连通性测试 ($STAGING_HOST)"
     if ping -c 1 -W 2 "$STAGING_HOST" >/dev/null 2>&1; then
         pass "Staging 路由器 $STAGING_HOST 网络 ICMP 畅通"

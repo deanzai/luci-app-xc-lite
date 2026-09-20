@@ -17,9 +17,13 @@ deploy-local.*
 github_token.txt
 login_message*.txt
 remote_*.txt
+remote_server_*.txt
 tests/remote_server_*.txt
 tests/deploy_to_*.sh
 local.txt
+local*.txt
+*credential*
+*secret*
 *.code-workspace
 .tools/
 tests/tmp/
