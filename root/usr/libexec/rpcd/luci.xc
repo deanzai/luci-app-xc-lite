@@ -283,7 +283,7 @@ local function sync_json_compat(nodes_payload, settings_payload)
     end
 end
 
-local APP_VERSION = "1.0.19-1"
+local APP_VERSION = "1.0.20-1"
 
 local methods = {
     get_status = function()
@@ -546,6 +546,12 @@ local methods = {
             if p then p:close() end
             if pid then
                 os.execute("/etc/init.d/xc restart >/dev/null 2>&1")
+                -- 核心修复：平滑等待端口重新监听就绪，消除前端刷新时的红色未监听状态
+                local s_port = tonumber(setting("socks_port") or 7890)
+                for _ = 1, 15 do
+                    os.execute("sleep 0.3")
+                    if check_port_listening(s_port) then break end
+                end
             end
 
             output_json({ code = ok_commit and 0 or 1, message = ok_commit and "source_updated" or "failed to commit uci" })
@@ -689,25 +695,149 @@ local methods = {
         local ret = os.execute("/usr/bin/xc restart >" .. tmp_log .. " 2>&1")
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
+        local s_port = tonumber(setting("socks_port") or 7890)
+        for _ = 1, 15 do
+            os.execute("sleep 0.3")
+            if check_port_listening(s_port) then break end
+        end
         output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
     end,
 
     stop_service = function()
         local ret = os.execute("/usr/bin/xc stop >/dev/null 2>&1")
         output_json({ code = (ret == 0) and 0 or 1, message = (ret == 0) and "stopped" or "stop_failed" })
+    end,
+
+    import_nodes = function(params)
+        local text = params and (params.text or params.uri or params.links)
+        if not text or text == "" or text:match("^%s*$") then
+            output_json({ code = 1, message = "请输入有效的节点分享链接或文本" })
+            return
+        end
+        local ok_imp, importer = pcall(require, "xc.importer")
+        if not ok_imp or not importer then
+            output_json({ code = 1, message = "缺少 xc.importer 模块" })
+            return
+        end
+        local parsed, err = importer.parse(text, json)
+        if not parsed or not parsed.nodes or #parsed.nodes == 0 then
+            output_json({ code = 1, message = "解析失败: " .. tostring(err or "未能识别到有效节点链接") })
+            return
+        end
+
+        local function get_next_id()
+            local max_id = 0
+            if uci_cursor then
+                uci_cursor:foreach("xc", "node", function(s)
+                    local id_num = tonumber(s.id)
+                    if id_num and id_num > max_id then max_id = id_num end
+                end)
+            end
+            return max_id + 1
+        end
+
+        local function map_node(raw_node, new_id)
+            local n = {
+                id = new_id,
+                name = raw_node.name or ("Node_" .. tostring(new_id)),
+                server = raw_node.server,
+                port = tonumber(raw_node.port)
+            }
+            local proto = (raw_node.protocol or ""):lower()
+            local sec = (raw_node.security or ""):lower()
+
+            if proto == "vless" then
+                if sec == "reality" then
+                    n.type = "VLESS REALITY"
+                    n.uuid = raw_node.uuid
+                    n.sni = raw_node.sni or ""
+                    n.public_key = raw_node.public_key or ""
+                    n.short_id = raw_node.short_id or ""
+                    n.fingerprint = raw_node.fingerprint or "chrome"
+                    n.flow = raw_node.flow or "xtls-rprx-vision"
+                    n.spider_x = raw_node.spider_x or "/"
+                else
+                    n.type = "VLESS TLS"
+                    n.uuid = raw_node.uuid
+                    n.sni = raw_node.sni or ""
+                    n.fingerprint = raw_node.fingerprint or "chrome"
+                    n.flow = raw_node.flow
+                end
+            elseif proto == "vmess" then
+                n.type = "VMess"
+                n.uuid = raw_node.uuid
+                n.alter_id = tonumber(raw_node.alter_id or 0)
+                n.sni = raw_node.sni or ""
+            elseif proto == "trojan" then
+                n.type = "Trojan"
+                n.uuid = raw_node.password
+                n.sni = raw_node.sni or raw_node.server or ""
+            elseif proto == "shadowsocks" then
+                n.type = "Shadowsocks"
+                n.method = raw_node.method
+                n.password = raw_node.password
+            elseif proto == "socks" then
+                n.type = "SOCKS5"
+            else
+                n.type = proto:upper()
+            end
+            return n
+        end
+
+        local start_id = get_next_id()
+        local imported_count = 0
+        if uci_cursor then
+            migrate_to_uci()
+            for i, raw_n in ipairs(parsed.nodes) do
+                local new_id = start_id + i - 1
+                local n = map_node(raw_n, new_id)
+                local sec_name = "node_" .. tostring(new_id)
+                uci_cursor:set("xc", sec_name, "node")
+                for k, v in pairs(n) do
+                    if v ~= nil then
+                        uci_cursor:set("xc", sec_name, k, tostring(v))
+                    end
+                end
+                imported_count = imported_count + 1
+            end
+            pcall(uci_cursor.commit, uci_cursor, "xc")
+
+            local all_nodes = {}
+            uci_cursor:foreach("xc", "node", function(s)
+                local item = {}
+                for k, v in pairs(s) do
+                    if k:sub(1, 1) ~= "." then
+                        item[k] = (k == "id" or k == "port") and tonumber(v) or v
+                    end
+                end
+                if item.id then table.insert(all_nodes, item) end
+            end)
+            table.sort(all_nodes, function(a, b) return (a.id or 0) < (b.id or 0) end)
+            sync_json_compat({
+                version = 1,
+                fixed_proxy_id = tonumber(uci_cursor:get("xc", "main", "fixed_proxy_id")) or 1,
+                nodes = all_nodes
+            })
+        end
+
+        output_json({
+            code = 0,
+            count = imported_count,
+            message = string.format("成功导入 %d 个节点！", imported_count)
+        })
     end
 }
 
 -- rpcd Dispatcher
 local action = arg[1]
 if action == "list" then
-    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"switch_fixed_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"switch_source":{"core_source":"","asset_source":""},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0},"restart_service":{},"stop_service":{}}\n')
+    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"switch_fixed_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"import_nodes":{"text":""},"switch_source":{"core_source":"","asset_source":""},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0},"restart_service":{},"stop_service":{}}\n')
 elseif action == "call" then
     local method = arg[2]
     local fn = methods[method]
     if fn then
         local params = {}
-        if method == "switch_node" or method == "switch_fixed_node" or method == "probe_node" or method == "save_node" or method == "delete_node" or method == "switch_source" or method == "save_settings" then
+        if method == "switch_node" or method == "switch_fixed_node" or method == "probe_node" or method == "save_node" or method == "delete_node" or method == "import_nodes" or method == "switch_source" or method == "save_settings" then
             params = parse_stdin()
         end
         fn(params)

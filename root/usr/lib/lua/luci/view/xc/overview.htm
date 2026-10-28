@@ -157,6 +157,7 @@
         <div class="cbi-section-actions" style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:center;">
             <div>
                 <button class="cbi-button cbi-button-save" onclick="openAddNodeModal()">+ <%=translate("添加节点信息")%></button>
+                <button class="cbi-button cbi-button-action" style="margin-left:8px;" onclick="openImportModal()">📥 <%=translate("导入节点链接")%></button>
                 <button id="btn-refresh-all" class="cbi-button cbi-button-action" style="margin-left:8px;" onclick="doRefreshAllSpeed()"><%=translate("手动刷新全部测速")%></button>
             </div>
             <div style="font-size:12px; color:#666;">
@@ -447,6 +448,30 @@
     </div>
 </div>
 
+<!-- 批量导入节点链接模态对话框 (Import Modal) -->
+<div id="xc-import-modal-mask" class="xc-modal-mask xc-hidden" style="display:none;">
+    <div class="xc-modal" style="max-width:580px; padding:22px; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; border-bottom:1px solid #eee; padding-bottom:10px;">
+            <h3 style="margin:0; font-size:16px; font-weight:600; display:flex; align-items:center; color:#1f2937;">
+                <span style="margin-right:8px; font-size:20px;">📥</span>
+                <span><%=translate("批量导入节点链接")%></span>
+            </h3>
+            <span style="cursor:pointer; font-size:22px; color:#9ca3af; line-height:1;" onclick="closeImportModal()">&times;</span>
+        </div>
+        <p style="margin:0 0 10px 0; font-size:13px; color:#4b5563;">
+            <%=translate("支持 vless://, vmess://, trojan://, ss://, socks5:// 等常见链接或包含节点的订阅文本，每行一个：")%>
+        </p>
+        <textarea id="xc-import-textarea" rows="8" class="cbi-input-textarea" style="width:100%; font-family:monospace; font-size:12px; resize:vertical; padding:8px; box-sizing:border-box;" placeholder="vless://...
+vmess://...
+trojan://..."></textarea>
+        <div id="xc-import-msg-box" style="display:none; padding:8px 12px; border-radius:6px; font-size:12px; margin-top:10px;"></div>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:14px;">
+            <button type="button" class="cbi-button cbi-button-reset" style="min-width:80px;" onclick="closeImportModal()"><%=translate("取消")%></button>
+            <button type="button" id="xc-btn-do-import" class="cbi-button cbi-button-save" style="min-width:100px;" onclick="doSubmitImport()"><%=translate("开始导入")%></button>
+        </div>
+    </div>
+</div>
+
 <!-- 文件上传进度条模态对话框 (Upload Progress Modal) -->
 <div id="xc-upload-modal-mask" class="xc-modal-mask xc-hidden" style="display:none;">
     <div class="xc-modal" style="max-width:520px; padding:22px; border-radius:10px; box-shadow:0 12px 30px rgba(0,0,0,0.3);">
@@ -704,7 +729,7 @@ function renderStatus() {
     var sHost = st.socks_host || (appData.settings && appData.settings.socks_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
     var hHost = st.http_host || (appData.settings && appData.settings.http_host) || (appData.settings && appData.settings.listen_host) || "127.0.0.1";
 
-    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.19-1";
+    var appVer = (st && st.app_version) || (appData.status && appData.status.app_version) || "1.0.20-1";
     var elBadge = document.getElementById("xc-app-version");
     if (elBadge) elBadge.innerText = "v" + appVer.replace(/^v/, "");
     var elStatVer = document.getElementById("stat-app-version");
@@ -843,18 +868,43 @@ function doUploadAsset(type, title) {
                 pbar.style.background = "#10b981";
                 stats.innerText = "100% - <%=translate('安装成功')%>";
                 stats.style.color = "#10b981";
-                statusText.innerText = "<%=translate('文件检验通过并已持久化保存！')%>";
+                statusText.innerText = "<%=translate('文件检验通过并已持久化保存！正在确认核心监听端口...')%>";
                 icon.innerText = "✅";
 
                 msgBox.style.display = "block";
                 msgBox.style.background = "#ecfdf5";
                 msgBox.style.border = "1px solid #a7f3d0";
                 msgBox.style.color = "#065f46";
-                msgBox.innerHTML = "<strong>" + title + " <%=translate('已成功部署！')%></strong><br>" + (res.message || "") + "<br><span style='font-size:12px; color:#047857;'><%=translate('面板将在 1.5 秒后自动刷新状态...')%></span>";
+                msgBox.innerHTML = "<strong>" + title + " <%=translate('已成功部署！')%></strong><br>" + (res.message || "") + "<br><span id='xc-upload-wait-tip' style='font-size:12px; color:#047857;'><%=translate('服务已重载，正在等待代理端口 (7890) 恢复就绪...')%></span>";
 
-                setTimeout(function() {
-                    window.location.reload();
-                }, 1500);
+                var pollAttempts = 0;
+                var maxAttempts = 20;
+                var pollCheck = function() {
+                    pollAttempts++;
+                    fetchJson("status").then(function(st) {
+                        if (st && st.socks_listening) {
+                            var tipEl = document.getElementById("xc-upload-wait-tip");
+                            if (tipEl) tipEl.innerText = "<%=translate('代理端口已正常监听！正在刷新面板...')%>";
+                            statusText.innerText = "<%=translate('服务端口已就绪！')%>";
+                            setTimeout(function() {
+                                window.location.reload();
+                            }, 500);
+                        } else if (pollAttempts < maxAttempts) {
+                            var tipEl = document.getElementById("xc-upload-wait-tip");
+                            if (tipEl) tipEl.innerText = "<%=translate('正在等待代理端口恢复就绪')%> (" + (pollAttempts * 0.5).toFixed(1) + "s)...";
+                            setTimeout(pollCheck, 500);
+                        } else {
+                            window.location.reload();
+                        }
+                    }).catch(function() {
+                        if (pollAttempts < maxAttempts) {
+                            setTimeout(pollCheck, 500);
+                        } else {
+                            window.location.reload();
+                        }
+                    });
+                };
+                setTimeout(pollCheck, 600);
             } else {
                 pbar.style.background = "#ef4444";
                 stats.style.color = "#ef4444";
@@ -1230,6 +1280,105 @@ function doSwitchSource(coreSource, assetSource) {
         }
     }).catch(function(e) {
         alert("<%=translate('请求出错：')%> " + e);
+    });
+}
+
+function openImportModal() {
+    var ta = document.getElementById("xc-import-textarea");
+    if (ta) ta.value = "";
+    var msg = document.getElementById("xc-import-msg-box");
+    if (msg) {
+        msg.style.display = "none";
+        msg.innerHTML = "";
+    }
+    var btn = document.getElementById("xc-btn-do-import");
+    if (btn) {
+        btn.disabled = false;
+        btn.innerText = "<%=translate('开始导入')%>";
+    }
+    var mask = document.getElementById("xc-import-modal-mask");
+    if (mask) {
+        mask.classList.remove("xc-hidden");
+        mask.style.display = "flex";
+    }
+}
+
+function closeImportModal() {
+    var mask = document.getElementById("xc-import-modal-mask");
+    if (mask) {
+        mask.classList.add("xc-hidden");
+        mask.style.display = "none";
+    }
+}
+
+function doSubmitImport() {
+    var ta = document.getElementById("xc-import-textarea");
+    var text = ta ? ta.value.trim() : "";
+    var msg = document.getElementById("xc-import-msg-box");
+    var btn = document.getElementById("xc-btn-do-import");
+
+    if (!text) {
+        if (msg) {
+            msg.style.display = "block";
+            msg.style.background = "#fffbeb";
+            msg.style.border = "1px solid #fde68a";
+            msg.style.color = "#b45309";
+            msg.innerHTML = "<%=translate('请在文本框中粘贴至少一个节点链接或节点订阅内容！')%>";
+        }
+        return;
+    }
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = "<%=translate('正在导入...')%>";
+    }
+    if (msg) {
+        msg.style.display = "block";
+        msg.style.background = "#eff6ff";
+        msg.style.border = "1px solid #bfdbfe";
+        msg.style.color = "#1d4ed8";
+        msg.innerHTML = "<%=translate('正在解析链接并写入系统配置...')%>";
+    }
+
+    fetch(BASE_URL + "/import_nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text })
+    }).then(function(r) { return r.json(); }).then(function(res) {
+        if (res && res.code === 0) {
+            if (msg) {
+                msg.style.background = "#ecfdf5";
+                msg.style.border = "1px solid #a7f3d0";
+                msg.style.color = "#065f46";
+                msg.innerHTML = "<strong><%=translate('导入成功！')%></strong> " + (res.message || "") + "<br><span style='font-size:11px;'><%=translate('正在刷新节点列表...')%></span>";
+            }
+            setTimeout(function() {
+                closeImportModal();
+                loadAll();
+            }, 1200);
+        } else {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = "<%=translate('开始导入')%>";
+            }
+            if (msg) {
+                msg.style.background = "#fef2f2";
+                msg.style.border = "1px solid #fecaca";
+                msg.style.color = "#991b1b";
+                msg.innerHTML = "<strong><%=translate('导入失败：')%></strong> " + (res && res.message ? res.message : "<%=translate('未知错误')%>");
+            }
+        }
+    }).catch(function(e) {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = "<%=translate('开始导入')%>";
+        }
+        if (msg) {
+            msg.style.background = "#fef2f2";
+            msg.style.border = "1px solid #fecaca";
+            msg.style.color = "#991b1b";
+            msg.innerHTML = "<strong><%=translate('网络请求异常：')%></strong> " + e;
+        }
     });
 }
 

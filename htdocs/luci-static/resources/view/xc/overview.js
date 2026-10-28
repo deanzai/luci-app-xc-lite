@@ -91,6 +91,13 @@ var callSaveSettings = rpc.declare({
 	expect: {}
 });
 
+var callImportNodes = rpc.declare({
+	object: 'luci.xc',
+	method: 'import_nodes',
+	params: [ 'text' ],
+	expect: {}
+});
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -264,17 +271,42 @@ return view.extend({
 					pbar.style.background = '#10b981';
 					statsText.innerText = '100% - ' + _('部署成功');
 					statsText.style.color = '#10b981';
-					statusText.innerText = _('文件校验通过并已就绪！');
+					statusText.innerText = _('文件校验通过并已就绪！正在确认核心监听端口...');
 
 					msgBox.style.display = 'block';
 					msgBox.style.background = '#ecfdf5';
 					msgBox.style.border = '1px solid #a7f3d0';
 					msgBox.style.color = '#065f46';
-					msgBox.innerHTML = '<strong>' + title + _(' 上传并部署成功！') + '</strong><br>' + (res.message || '') + '<br><span style="font-size:12px; color:#047857;">' + _('页面将在 1.5 秒后自动刷新...') + '</span>';
+					msgBox.innerHTML = '<strong>' + title + _(' 上传并部署成功！') + '</strong><br>' + (res.message || '') + '<br><span id="xc-upload-wait-tip-js" style="font-size:12px; color:#047857;">' + _('服务已重载，正在等待代理端口 (7890) 恢复就绪...') + '</span>';
 
-					setTimeout(function() {
-						window.location.reload();
-					}, 1500);
+					var pollAttempts = 0;
+					var maxAttempts = 20;
+					var pollCheck = function() {
+						pollAttempts++;
+						callGetStatus().then(function(st) {
+							if (st && st.socks_listening) {
+								var tipEl = document.getElementById('xc-upload-wait-tip-js');
+								if (tipEl) tipEl.innerText = _('代理端口已正常监听！正在刷新面板...');
+								statusText.innerText = _('服务端口已就绪！');
+								setTimeout(function() {
+									window.location.reload();
+								}, 500);
+							} else if (pollAttempts < maxAttempts) {
+								var tipEl = document.getElementById('xc-upload-wait-tip-js');
+								if (tipEl) tipEl.innerText = _('正在等待代理端口恢复就绪') + ' (' + (pollAttempts * 0.5).toFixed(1) + 's)...';
+								setTimeout(pollCheck, 500);
+							} else {
+								window.location.reload();
+							}
+						}).catch(function() {
+							if (pollAttempts < maxAttempts) {
+								setTimeout(pollCheck, 500);
+							} else {
+								window.location.reload();
+							}
+						});
+					};
+					setTimeout(pollCheck, 600);
 				} else {
 					pbar.style.background = '#ef4444';
 					statsText.style.color = '#ef4444';
@@ -567,7 +599,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('插件版本')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.15-1').replace(/^v/, ''))
+						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.20-1').replace(/^v/, ''))
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -916,6 +948,15 @@ return view.extend({
 					}
 				}, '+ ' + _('添加节点信息')),
 
+				// Import Nodes Button
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'style': 'margin-left:8px;',
+					'click': function() {
+						self.showImportModal(nodesData);
+					}
+				}, '📥 ' + _('导入节点链接')),
+
 				// Concurrency Queue Speed Test
 				probeBtn,
 				probeStatusSpan
@@ -933,6 +974,88 @@ return view.extend({
 			toolbar,
 			table
 		]);
+	},
+
+	showImportModal: function(allData) {
+		var self = this;
+		var textarea = E('textarea', {
+			'class': 'cbi-input-textarea',
+			'rows': 8,
+			'style': 'width: 100%; font-family: monospace; font-size: 12px; resize: vertical; box-sizing: border-box; padding: 8px;',
+			'placeholder': 'vless://...\nvmess://...\ntrojan://...\nss://...'
+		});
+
+		var tipBox = E('div', {
+			'style': 'display: none; padding: 8px 12px; border-radius: 4px; font-size: 12px; margin-top: 10px; line-height: 1.4;'
+		});
+
+		var btnSubmit = E('button', {
+			'class': 'cbi-button cbi-button-save',
+			'click': function(ev) {
+				var text = (textarea.value || '').trim();
+				if (!text) {
+					tipBox.style.display = 'block';
+					tipBox.style.background = '#fffbeb';
+					tipBox.style.border = '1px solid #fde68a';
+					tipBox.style.color = '#b45309';
+					tipBox.innerText = _('请在文本框中粘贴至少一个节点链接或节点订阅内容！');
+					return;
+				}
+
+				btnSubmit.disabled = true;
+				btnSubmit.innerText = _('正在导入...');
+				tipBox.style.display = 'block';
+				tipBox.style.background = '#eff6ff';
+				tipBox.style.border = '1px solid #bfdbfe';
+				tipBox.style.color = '#1d4ed8';
+				tipBox.innerText = _('正在解析链接并写入系统配置...');
+
+				callImportNodes(text).then(function(res) {
+					if (res && res.code === 0) {
+						tipBox.style.background = '#ecfdf5';
+						tipBox.style.border = '1px solid #a7f3d0';
+						tipBox.style.color = '#065f46';
+						tipBox.innerHTML = '<strong>' + _('导入成功！') + '</strong> ' + (res.message || '') + '<br><span style="font-size:11px;">' + _('正在刷新页面...') + '</span>';
+						setTimeout(function() {
+							ui.hideModal();
+							window.location.reload();
+						}, 1200);
+					} else {
+						btnSubmit.disabled = false;
+						btnSubmit.innerText = _('开始导入');
+						tipBox.style.background = '#fef2f2';
+						tipBox.style.border = '1px solid #fecaca';
+						tipBox.style.color = '#991b1b';
+						tipBox.innerHTML = '<strong>' + _('导入失败：') + '</strong> ' + (res && res.message ? res.message : _('未知错误'));
+					}
+				}).catch(function(e) {
+					btnSubmit.disabled = false;
+					btnSubmit.innerText = _('开始导入');
+					tipBox.style.background = '#fef2f2';
+					tipBox.style.border = '1px solid #fecaca';
+					tipBox.style.color = '#991b1b';
+					tipBox.innerHTML = '<strong>' + _('网络异常：') + '</strong> ' + e;
+				});
+			}
+		}, _('开始导入'));
+
+		var modalBody = E('div', { 'style': 'padding: 5px 0;' }, [
+			E('p', { 'style': 'margin: 0 0 10px 0; font-size: 13px; color: #4b5563; line-height: 1.5;' }, [
+				_('支持 vless://, vmess://, trojan://, ss://, socks5:// 等常见链接或包含节点的订阅文本，每行一个链接：')
+			]),
+			textarea,
+			tipBox,
+			E('div', { 'class': 'right', 'style': 'margin-top: 15px;' }, [
+				E('button', {
+					'class': 'cbi-button cbi-button-reset',
+					'style': 'margin-right: 8px;',
+					'click': ui.hideModal
+				}, _('取消')),
+				btnSubmit
+			])
+		]);
+
+		ui.showModal(_('批量导入节点链接'), [ modalBody ]);
 	},
 
 	showNodeModal: function(mode, nodeData, allData) {
@@ -1372,7 +1495,7 @@ return view.extend({
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, [
 				_('xc 节点切换与分流管理器'),
-				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.16-1').replace(/^v/, ''))
+				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.20-1').replace(/^v/, ''))
 			]),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),

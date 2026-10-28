@@ -15,9 +15,11 @@ function index()
     entry({"admin", "services", "xc", "status"}, call("act_status")).leaf = true
     entry({"admin", "services", "xc", "get_nodes"}, call("act_get_nodes")).leaf = true
     entry({"admin", "services", "xc", "switch_node"}, call("act_switch_node")).leaf = true
+    entry({"admin", "services", "xc", "switch_fixed_node"}, call("act_switch_fixed_node")).leaf = true
     entry({"admin", "services", "xc", "probe_node"}, call("act_probe_node")).leaf = true
     entry({"admin", "services", "xc", "save_node"}, call("act_save_node")).leaf = true
     entry({"admin", "services", "xc", "delete_node"}, call("act_delete_node")).leaf = true
+    entry({"admin", "services", "xc", "import_nodes"}, call("act_import_nodes")).leaf = true
     entry({"admin", "services", "xc", "switch_source"}, call("act_switch_source")).leaf = true
     entry({"admin", "services", "xc", "test_health"}, call("act_test_health")).leaf = true
     entry({"admin", "services", "xc", "get_settings"}, call("act_get_settings")).leaf = true
@@ -64,6 +66,11 @@ function act_switch_node()
     call_rpcd("switch_node", string.format('{"id":%d}', tonumber(id) or 0))
 end
 
+function act_switch_fixed_node()
+    local id = luci.http.formvalue("id") or luci.http.formvalue("fixed_proxy_id")
+    call_rpcd("switch_fixed_node", string.format('{"id":%s}', luci.util.shellquote(tostring(id or ""))))
+end
+
 function act_probe_node()
     local id = luci.http.formvalue("id")
     local timeout = luci.http.formvalue("timeout")
@@ -82,6 +89,11 @@ end
 function act_delete_node()
     local id = luci.http.formvalue("id")
     call_rpcd("delete_node", string.format('{"id":%d}', tonumber(id) or 0))
+end
+
+function act_import_nodes()
+    local content = luci.http.content() or "{}"
+    call_rpcd("import_nodes", content)
 end
 
 function act_switch_source()
@@ -302,6 +314,14 @@ function act_upload(target_type)
 
             os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core from " .. archive_type .. ": " .. ver_str))
             silent_rpcd("switch_source", '{"core_source":"custom"}')
+            -- 平滑等待监听建立，防止前端过早查询显示端口为红色未监听
+            for _ = 1, 15 do
+                local p = io.popen("netstat -lnt 2>/dev/null | grep ':7890 '")
+                local line = p and p:read("*l")
+                if p then p:close() end
+                if line then break end
+                os.execute("sleep 0.3")
+            end
             luci.http.write(string.format('{"code":0,"message":"Xray %s 压缩包已自动解压并成功激活为自定义核心！(%s)"}', archive_type:upper(), ver_str))
             return
         end
@@ -338,6 +358,14 @@ function act_upload(target_type)
 
         os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core: " .. ver_str))
         silent_rpcd("switch_source", '{"core_source":"custom"}')
+        -- 平滑等待监听建立，防止前端过早查询显示端口为红色未监听
+        for _ = 1, 15 do
+            local p = io.popen("netstat -lnt 2>/dev/null | grep ':7890 '")
+            local line = p and p:read("*l")
+            if p then p:close() end
+            if line then break end
+            os.execute("sleep 0.3")
+        end
         luci.http.write(string.format('{"code":0,"message":"Xray 核心已成功安装并激活为自定义核心！(%s)"}', ver_str))
     elseif upload_type == "geosite" then
         if stat.size < 100 * 1024 then

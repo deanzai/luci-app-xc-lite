@@ -21,7 +21,7 @@ local COMPAT_CURRENT = ROOT .. "/current"
 local PREV_CONFIG = VAR_DIR .. "/config.previous"
 local PREV_CURRENT = VAR_DIR .. "/current.previous"
 
-local APP_VERSION = "1.0.19-1"
+local APP_VERSION = "1.0.20-1"
 
 local DEFAULT_SETTINGS = {
     enabled = "1",
@@ -987,6 +987,122 @@ local function set_source(c_src, a_src)
     return true
 end
 
+local function get_next_node_id()
+    local max_id = 0
+    if uci_cursor then
+        uci_cursor:foreach("xc", "node", function(s)
+            local id_num = tonumber(s.id)
+            if id_num and id_num > max_id then
+                max_id = id_num
+            end
+        end)
+    else
+        local d = nodes_data()
+        if d and d.nodes then
+            for _, n in ipairs(d.nodes) do
+                local id_num = tonumber(n.id)
+                if id_num and id_num > max_id then
+                    max_id = id_num
+                end
+            end
+        end
+    end
+    return max_id + 1
+end
+
+local function map_imported_node(raw_node, new_id)
+    local n = {
+        id = new_id,
+        name = raw_node.name or ("Node_" .. tostring(new_id)),
+        server = raw_node.server,
+        port = tonumber(raw_node.port)
+    }
+    local proto = (raw_node.protocol or ""):lower()
+    local sec = (raw_node.security or ""):lower()
+
+    if proto == "vless" then
+        if sec == "reality" then
+            n.type = "VLESS REALITY"
+            n.uuid = raw_node.uuid
+            n.sni = raw_node.sni or ""
+            n.public_key = raw_node.public_key or ""
+            n.short_id = raw_node.short_id or ""
+            n.fingerprint = raw_node.fingerprint or "chrome"
+            n.flow = raw_node.flow or "xtls-rprx-vision"
+            n.spider_x = raw_node.spider_x or "/"
+        else
+            n.type = "VLESS TLS"
+            n.uuid = raw_node.uuid
+            n.sni = raw_node.sni or ""
+            n.fingerprint = raw_node.fingerprint or "chrome"
+            n.flow = raw_node.flow
+        end
+    elseif proto == "vmess" then
+        n.type = "VMess"
+        n.uuid = raw_node.uuid
+        n.alter_id = tonumber(raw_node.alter_id or 0)
+        n.sni = raw_node.sni or ""
+    elseif proto == "trojan" then
+        n.type = "Trojan"
+        n.uuid = raw_node.password
+        n.sni = raw_node.sni or raw_node.server or ""
+    elseif proto == "shadowsocks" then
+        n.type = "Shadowsocks"
+        n.method = raw_node.method
+        n.password = raw_node.password
+    elseif proto == "socks" then
+        n.type = "SOCKS5"
+    else
+        n.type = proto:upper()
+    end
+    return n
+end
+
+local function import_nodes(text)
+    local ok_imp, importer = pcall(require, "xc.importer")
+    if not ok_imp or not importer then
+        return false, "xc.importer module not found"
+    end
+    local parsed, err = importer.parse(text, json)
+    if not parsed or not parsed.nodes or #parsed.nodes == 0 then
+        return false, err or "no valid nodes parsed"
+    end
+
+    local imported_list = {}
+    local start_id = get_next_node_id()
+    if uci_cursor then
+        migrate_to_uci()
+        for i, raw_node in ipairs(parsed.nodes) do
+            local new_id = start_id + i - 1
+            local node = map_imported_node(raw_node, new_id)
+            local sec_name = "node_" .. tostring(new_id)
+            uci_cursor:set("xc", sec_name, "node")
+            for k, v in pairs(node) do
+                if v ~= nil then
+                    uci_cursor:set("xc", sec_name, k, tostring(v))
+                end
+            end
+            table.insert(imported_list, node)
+        end
+        pcall(uci_cursor.commit, uci_cursor, "xc")
+
+        local all = nodes_data()
+        pcall(write, NODES_FILE, json.stringify(all, 1))
+    else
+        local d = nodes_data()
+        d.nodes = d.nodes or {}
+        for i, raw_node in ipairs(parsed.nodes) do
+            local new_id = start_id + i - 1
+            local node = map_imported_node(raw_node, new_id)
+            table.insert(d.nodes, node)
+            table.insert(imported_list, node)
+        end
+        pcall(write, NODES_FILE, json.stringify(d, 1))
+    end
+
+    return true, imported_list
+end
+
 -- CLI Entry Point
 local data = nodes_data()
 local command = arg[1] or "current"
@@ -1128,10 +1244,30 @@ elseif command == "restart" or command == "start" then
 elseif command == "stop" then
     local ret = os.execute("/etc/init.d/xc stop >/dev/null 2>&1")
     os.exit(ret == 0 and 0 or 1)
+elseif command == "import" then
+    local text = arg[2]
+    if not text or text == "" then
+        text = io.read("*a")
+    end
+    if not text or text:match("^%s*$") then
+        io.stderr:write("usage: xc import <link|text> (or pipe text via stdin)\n")
+        os.exit(2)
+    end
+    local ok, res = import_nodes(text)
+    if ok then
+        io.write(string.format("Successfully imported %d node(s):\n", #res))
+        for _, n in ipairs(res) do
+            io.write(string.format("  #%d [%s] %s (%s:%s)\n", n.id, n.type, n.name, n.server or "", tostring(n.port or "")))
+        end
+        os.exit(0)
+    else
+        io.stderr:write("import failed: " .. tostring(res) .. "\n")
+        os.exit(1)
+    end
 elseif tonumber(command) then
     local ok = select_node(tonumber(command))
     os.exit(ok and 0 or 1)
 else
-    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc fixed <id|auto> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc enable | xc disable | xc generate [path] [id] | xc test | xc migrate | xc set-source <core> [asset]\n")
+    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc fixed <id|auto> | xc import <link> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc enable | xc disable | xc generate [path] [id] | xc test | xc migrate | xc set-source <core> [asset]\n")
     os.exit(2)
 end
