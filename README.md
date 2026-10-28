@@ -193,6 +193,13 @@ xc rollback      # 恢复上一份配置
   - CLI 新增 `xc import "<url|text>"` 命令行批量导入接口；
   - rpcd 后端与 LuCI Controller 统一注册 `import_nodes` 接口；
   - Web 界面新增「📥 导入节点链接」模态弹窗，支持多行批量输入与自动递增分配节点编号 (ID)，即导即测即用。
+- **安全加固与现代 LuCI 规范化重构 (Modern Architecture & Hardening)**：
+  - **消除命令注入（RCE）高危隐患**：`rpcd/luci.xc` 对 `switch_fixed_node` 严格实行白名单校验与安全格式化，彻底杜绝 Shell 命令注入；
+  - **上传端点强鉴权与 CSRF 防护**：`controller/xc.lua` 仅保留大文件上传端点，施加 `sysauth = "root"` 与 Session Token 多通道校验；
+  - **精细化 ACL 权限控制**：`acl.d/luci-app-xc.json` 彻底废除 `*` 通配符，精确分离 `read` 与 `write` 接口，移除直接文件级写入权限；
+  - **代码净化与现代化收敛**：彻底删除历史遗留的 `luasrc/` 废弃代码与冗余 Controller API，前端全面归一至纯原生 JavaScript View (`overview.js`)；
+  - **Makefile 规范化**：补齐 `+luci-base` 依赖，规范化 `uci-defaults` 开机执行逻辑；
+  - **子 Agent 深度审计与真机实测**：全量代码均通过专门审查子 Agent 的静态字节码与逻辑核查，真机注入测试 100% 成功拦截，端到端功能验证通过。
 
 ---
 

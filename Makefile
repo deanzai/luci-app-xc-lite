@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI Web interface for xc (Xray node switcher and router)
-LUCI_DEPENDS:=+xray-core +curl +netstat +rpcd +rpcd-mod-file +libuci-lua
+LUCI_DEPENDS:=+luci-base +rpcd +rpcd-mod-file +xray-core +curl +netstat +libuci-lua
 LUCI_PKGARCH:=all
 
 PKG_NAME:=luci-app-xc

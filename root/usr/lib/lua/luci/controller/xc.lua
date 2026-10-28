@@ -11,115 +11,16 @@ function index()
         return
     end
 
-    entry({"admin", "services", "xc"}, template("xc/overview"), _("xc 节点分流"), 60).dependent = true
-    entry({"admin", "services", "xc", "status"}, call("act_status")).leaf = true
-    entry({"admin", "services", "xc", "get_nodes"}, call("act_get_nodes")).leaf = true
-    entry({"admin", "services", "xc", "switch_node"}, call("act_switch_node")).leaf = true
-    entry({"admin", "services", "xc", "switch_fixed_node"}, call("act_switch_fixed_node")).leaf = true
-    entry({"admin", "services", "xc", "probe_node"}, call("act_probe_node")).leaf = true
-    entry({"admin", "services", "xc", "save_node"}, call("act_save_node")).leaf = true
-    entry({"admin", "services", "xc", "delete_node"}, call("act_delete_node")).leaf = true
-    entry({"admin", "services", "xc", "import_nodes"}, call("act_import_nodes")).leaf = true
-    entry({"admin", "services", "xc", "switch_source"}, call("act_switch_source")).leaf = true
-    entry({"admin", "services", "xc", "test_health"}, call("act_test_health")).leaf = true
-    entry({"admin", "services", "xc", "get_settings"}, call("act_get_settings")).leaf = true
-    entry({"admin", "services", "xc", "save_settings"}, call("act_save_settings")).leaf = true
-    entry({"admin", "services", "xc", "restart_service"}, call("act_restart_service")).leaf = true
-    entry({"admin", "services", "xc", "stop_service"}, call("act_stop_service")).leaf = true
-    entry({"admin", "services", "xc", "upload"}, call("act_upload")).leaf = true
+    -- 现代 LuCI 规范：菜单与视图统一由 /usr/share/luci/menu.d/luci-app-xc.json 声明加载
+    -- 本控制器仅提供核心大文件安全的流式上传端点，施加严格 root 鉴权与 CSRF 防御
+    local e = entry({"admin", "services", "xc", "upload"}, call("act_upload"))
+    e.leaf = true
+    e.sysauth = "root"
+    e.sysauth_authenticator = "htmlauth"
 end
 
-local function call_rpcd(method, input_json)
-    local cmd
-    if input_json and #input_json > 0 then
-        cmd = "echo " .. luci.util.shellquote(input_json) .. " | /usr/libexec/rpcd/luci.xc call " .. method .. " 2>/dev/null"
-    else
-        cmd = "echo '' | /usr/libexec/rpcd/luci.xc call " .. method .. " 2>/dev/null"
-    end
-    local p = io.popen(cmd)
-    local res = p and p:read("*a") or "{}"
-    if p then p:close() end
-    luci.http.prepare_content("application/json")
-    luci.http.write(res)
-end
-
-local function silent_rpcd(method, input_json)
-    local cmd
-    if input_json and #input_json > 0 then
-        cmd = "echo " .. luci.util.shellquote(input_json) .. " | /usr/libexec/rpcd/luci.xc call " .. method .. " >/dev/null 2>&1"
-    else
-        cmd = "echo '' | /usr/libexec/rpcd/luci.xc call " .. method .. " >/dev/null 2>&1"
-    end
-    os.execute(cmd)
-end
-
-function act_status()
-    call_rpcd("get_status")
-end
-
-function act_get_nodes()
-    call_rpcd("get_nodes")
-end
-
-function act_switch_node()
-    local id = luci.http.formvalue("id")
-    call_rpcd("switch_node", string.format('{"id":%d}', tonumber(id) or 0))
-end
-
-function act_switch_fixed_node()
-    local id = luci.http.formvalue("id") or luci.http.formvalue("fixed_proxy_id")
-    call_rpcd("switch_fixed_node", string.format('{"id":%s}', luci.util.shellquote(tostring(id or ""))))
-end
-
-function act_probe_node()
-    local id = luci.http.formvalue("id")
-    local timeout = luci.http.formvalue("timeout")
-    if timeout then
-        call_rpcd("probe_node", string.format('{"id":%d,"timeout":%d}', tonumber(id) or 0, tonumber(timeout) or 5))
-    else
-        call_rpcd("probe_node", string.format('{"id":%d}', tonumber(id) or 0))
-    end
-end
-
-function act_save_node()
-    local content = luci.http.content() or "{}"
-    call_rpcd("save_node", content)
-end
-
-function act_delete_node()
-    local id = luci.http.formvalue("id")
-    call_rpcd("delete_node", string.format('{"id":%d}', tonumber(id) or 0))
-end
-
-function act_import_nodes()
-    local content = luci.http.content() or "{}"
-    call_rpcd("import_nodes", content)
-end
-
-function act_switch_source()
-    local content = luci.http.content() or "{}"
-    call_rpcd("switch_source", content)
-end
-
-function act_test_health()
-    call_rpcd("test_health")
-end
-
-function act_get_settings()
-    call_rpcd("get_settings")
-end
-
-function act_save_settings()
-    local content = luci.http.content() or "{}"
-    call_rpcd("save_settings", content)
-end
-
-function act_restart_service()
-    call_rpcd("restart_service")
-end
-
-function act_stop_service()
-    call_rpcd("stop_service")
+local function notify_source_switch(source_payload)
+    os.execute("ubus call luci.xc switch_source " .. luci.util.shellquote(source_payload) .. " >/dev/null 2>&1")
 end
 
 function act_upload(target_type)
@@ -130,6 +31,7 @@ function act_upload(target_type)
     local upload_err = nil
     local file_size = 0
     local form_type = nil
+    local form_token = nil
     local uploaded_filename = nil
 
     luci.http.setfilehandler(
@@ -137,6 +39,9 @@ function act_upload(target_type)
             local field_name = type(meta) == "table" and meta.name or meta
             if field_name == "type" and chunk and #chunk > 0 then
                 form_type = (form_type or "") .. chunk
+            end
+            if field_name == "token" and chunk and #chunk > 0 then
+                form_token = (form_token or "") .. chunk
             end
             if field_name == "file" or (type(meta) == "table" and meta.file) then
                 if type(meta) == "table" and meta.file then
@@ -164,27 +69,33 @@ function act_upload(target_type)
         end
     )
 
-    -- 必须在进入具体逻辑前调用 formvalue 强制驱动 LuCI 解析整个 multipart 请求流
+    -- 驱动解析 multipart 请求流并提取参数与 CSRF Token
     local form_val_type = luci.http.formvalue("type")
-    local form_val_token = luci.http.formvalue("token")
+    local form_val_token = luci.http.formvalue("token") or form_token
+    local query_string = luci.http.getenv("QUERY_STRING") or ""
+    if not form_val_token and query_string then
+        form_val_token = query_string:match("token=([%w_%-]+)")
+    end
+    if not form_val_token then
+        form_val_token = luci.http.getenv("HTTP_X_CSRF_TOKEN")
+    end
 
     if file_handle then
         file_handle:close()
         file_handle = nil
     end
 
-    local query_string = luci.http.getenv("QUERY_STRING") or ""
-    local q_type = query_string:match("type=([%w_]+)")
-    local raw_type = target_type or form_val_type or form_type or q_type
-    if type(raw_type) == "table" then
-        raw_type = raw_type[1] or raw_type[#raw_type]
-    end
-    local upload_type = nil
-    if type(raw_type) == "string" and #raw_type > 0 then
-        upload_type = raw_type:gsub("^%s+", ""):gsub("%s+$", ""):lower()
-    end
-
     luci.http.prepare_content("application/json")
+
+    -- CSRF Token 严格安全鉴权校验
+    local session_token = (luci.http.context and luci.http.context.token)
+        or (luci.dispatcher and luci.dispatcher.context and (luci.dispatcher.context.token or luci.dispatcher.context.requesttoken))
+    if not session_token or form_val_token ~= session_token then
+        os.remove(tmp_file)
+        luci.http.status(403, "Forbidden")
+        luci.http.write('{"code":403,"message":"CSRF Token 鉴权失败，请刷新页面重新登录"}')
+        return
+    end
 
     if upload_err then
         luci.http.write(string.format('{"code":1,"message":"上传失败: %s"}', upload_err))
@@ -196,6 +107,17 @@ function act_upload(target_type)
         os.remove(tmp_file)
         luci.http.write('{"code":1,"message":"未检测到上传文件或文件为空"}')
         return
+    end
+
+    local query_string = luci.http.getenv("QUERY_STRING") or ""
+    local q_type = query_string:match("type=([%w_]+)")
+    local raw_type = target_type or form_val_type or form_type or q_type
+    if type(raw_type) == "table" then
+        raw_type = raw_type[1] or raw_type[#raw_type]
+    end
+    local upload_type = nil
+    if type(raw_type) == "string" and #raw_type > 0 then
+        upload_type = raw_type:gsub("^%s+", ""):gsub("%s+$", ""):lower()
     end
 
     -- 智能识别兜底：若客户端丢失或未传入 type 参数，根据文件特征自动推断
@@ -239,7 +161,6 @@ function act_upload(target_type)
         if is_zip or is_gzip then
             local extract_dir = "/tmp/xc_extract_" .. os.time()
             fs.mkdirr(extract_dir)
-            local unpack_cmd = nil
             local archive_type = is_zip and "zip" or "tar.gz"
 
             if is_zip then
@@ -250,114 +171,75 @@ function act_upload(target_type)
                     luci.http.write('{"code":1,"message":"解压工具缺失：系统未安装 unzip 工具。请先在路由器安装 unzip (opkg install unzip) 或使用 tar.gz / 二进制核心上传"}')
                     return
                 end
-                unpack_cmd = string.format("unzip -q -o %s -d %s 2>&1", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
-            else
-                unpack_cmd = string.format("tar -xzf %s -C %s 2>&1", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
             end
+
+            local unpack_cmd = is_zip 
+                and string.format("unzip -o -q %s -d %s", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
+                or string.format("tar -zxf %s -C %s", luci.util.shellquote(tmp_file), luci.util.shellquote(extract_dir))
 
             local unpack_ret = os.execute(unpack_cmd)
             os.remove(tmp_file)
 
             if unpack_ret ~= 0 then
                 os.execute(string.format("rm -rf %s", luci.util.shellquote(extract_dir)))
-                luci.http.write(string.format('{"code":1,"message":"压缩包异常：%s 自动解压失败，请确认压缩包是否损坏或带有密码"}', archive_type))
+                luci.http.write(string.format('{"code":1,"message":"解压失败：无法解压上传的 %s 压缩包"}', archive_type))
                 return
             end
 
-            -- 遍历解压出来的文件，检测 ELF 可执行程序，优先匹配名为 xray 或 xray-core
-            local p = io.popen(string.format("find %s -type f 2>/dev/null", luci.util.shellquote(extract_dir)))
-            local candidate_file = nil
-            local xray_named_file = nil
+            local find_cmd = string.format("find %s -type f \\( -name 'xray' -o -name 'Xray' \\) | head -n 1", luci.util.shellquote(extract_dir))
+            local fp = io.popen(find_cmd)
+            local found_xray = fp and fp:read("*l") or ""
+            if fp then fp:close() end
 
-            if p then
-                for line in p:lines() do
-                    local fpath = line:gsub("^%s+", ""):gsub("%s+$", "")
-                    local hf = io.open(fpath, "rb")
-                    local hmagic = hf and hf:read(4) or ""
-                    if hf then hf:close() end
-                    if hmagic == "\127ELF" then
-                        local fname = fpath:match("([^/]+)$")
-                        if fname == "xray" or fname == "xray-core" then
-                            xray_named_file = fpath
-                            break
-                        elseif not candidate_file then
-                            candidate_file = fpath
-                        end
-                    end
-                end
-                p:close()
-            end
-
-            local chosen_file = xray_named_file or candidate_file
-            if not chosen_file then
+            if not found_xray or #found_xray == 0 then
                 os.execute(string.format("rm -rf %s", luci.util.shellquote(extract_dir)))
-                luci.http.write('{"code":1,"message":"解压完成，但在压缩包内未找到 Linux ELF 二进制程序 (xray)"}')
+                luci.http.write('{"code":1,"message":"压缩包内未找到 xray 主程序"}')
                 return
             end
 
             local dest = BIN_DIR .. "/xray"
             os.remove(dest)
-            os.execute(string.format("cp -f %s %s", luci.util.shellquote(chosen_file), luci.util.shellquote(dest)))
+            local cp_ret = os.execute(string.format("cp -f %s %s", luci.util.shellquote(found_xray), luci.util.shellquote(dest)))
             os.execute(string.format("rm -rf %s", luci.util.shellquote(extract_dir)))
-            fs.chmod(dest, 755)
 
-            -- 快速校验架构兼容性与版本号
-            local ver_p = io.popen(dest .. " version 2>&1 | head -n 1")
-            local ver_str = ver_p and ver_p:read("*l") or ""
-            if ver_p then ver_p:close() end
-
-            if not ver_str or not ver_str:find("Xray") then
-                os.execute("logger -t xc-upload -p daemon.warn " .. luci.util.shellquote("Extracted xray binary could not be executed: " .. (ver_str or "none")))
-                luci.http.write(string.format('{"code":1,"message":"架构不兼容：解压出的 Xray 核心无法正常运行，请确认是否为 ARM64 (aarch64) 架构 (测试输出: %s)"}', ver_str or "无法运行"))
+            if cp_ret ~= 0 then
+                luci.http.write('{"code":1,"message":"核心文件转存至 /etc/xc/bin/xray 失败"}')
                 return
             end
-
-            os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core from " .. archive_type .. ": " .. ver_str))
-            silent_rpcd("switch_source", '{"core_source":"custom"}')
-            -- 平滑等待监听建立，防止前端过早查询显示端口为红色未监听
-            for _ = 1, 15 do
-                local p = io.popen("netstat -lnt 2>/dev/null | grep ':7890 '")
-                local line = p and p:read("*l")
-                if p then p:close() end
-                if line then break end
-                os.execute("sleep 0.3")
+        elseif is_elf then
+            local dest = BIN_DIR .. "/xray"
+            os.remove(dest)
+            if not fs.move(tmp_file, dest) then
+                local cp_ret = os.execute(string.format("cp -f %s %s && rm -f %s", luci.util.shellquote(tmp_file), luci.util.shellquote(dest), luci.util.shellquote(tmp_file)))
+                if cp_ret ~= 0 then
+                    luci.http.write('{"code":1,"message":"核心文件转存至 /etc/xc/bin/xray 失败"}')
+                    return
+                end
             end
-            luci.http.write(string.format('{"code":0,"message":"Xray %s 压缩包已自动解压并成功激活为自定义核心！(%s)"}', archive_type:upper(), ver_str))
-            return
-        end
-
-        if not is_elf then
+        else
             os.remove(tmp_file)
-            luci.http.write('{"code":1,"message":"格式错误：不是合法的 Linux ELF 二进制可执行文件或 .zip / .tar.gz 压缩包"}')
-            return
-        end
-
-        if stat.size < 1024 * 1024 then
-            os.remove(tmp_file)
-            luci.http.write('{"code":1,"message":"文件异常：Xray 核心程序过小 (< 1MB)，请检查文件是否完整"}')
+            luci.http.write('{"code":1,"message":"文件格式不支持：请上传 Linux ELF 二进制程序或 .zip / .tar.gz 压缩包"}')
             return
         end
 
         local dest = BIN_DIR .. "/xray"
-        os.remove(dest)
-        if not fs.move(tmp_file, dest) then
-            os.execute(string.format("cp -f %s %s && rm -f %s", tmp_file, dest, tmp_file))
-        end
         fs.chmod(dest, 755)
 
-        -- 快速校验架构兼容性与版本号
-        local ver_p = io.popen(dest .. " version 2>&1 | head -n 1")
+        -- 架构执行与版本有效性校验
+        local ver_cmd = string.format("%s version 2>&1 | head -n 1", luci.util.shellquote(dest))
+        local ver_p = io.popen(ver_cmd)
         local ver_str = ver_p and ver_p:read("*l") or ""
         if ver_p then ver_p:close() end
 
         if not ver_str or not ver_str:find("Xray") then
+            os.remove(dest)
             os.execute("logger -t xc-upload -p daemon.warn " .. luci.util.shellquote("Uploaded xray binary could not be executed: " .. (ver_str or "none")))
-            luci.http.write(string.format('{"code":1,"message":"架构不兼容：核心无法正常运行，请确认是否为 ARM64 (aarch64) 架构 (测试输出: %s)"}', ver_str or "无法运行"))
+            luci.http.write(string.format('{"code":1,"message":"架构不兼容：核心无法正常运行，请确认是否为当前路由器架构 (测试输出: %s)"}', ver_str or "无法运行"))
             return
         end
 
         os.execute("logger -t xc-upload -p daemon.info " .. luci.util.shellquote("Successfully installed xray core: " .. ver_str))
-        silent_rpcd("switch_source", '{"core_source":"custom"}')
+        notify_source_switch('{"core_source":"custom"}')
         -- 平滑等待监听建立，防止前端过早查询显示端口为红色未监听
         for _ = 1, 15 do
             local p = io.popen("netstat -lnt 2>/dev/null | grep ':7890 '")
@@ -376,11 +258,11 @@ function act_upload(target_type)
         local dest = ASSET_DIR .. "/geosite.dat"
         os.remove(dest)
         if not fs.move(tmp_file, dest) then
-            os.execute(string.format("cp -f %s %s && rm -f %s", tmp_file, dest, tmp_file))
+            os.execute(string.format("cp -f %s %s && rm -f %s", luci.util.shellquote(tmp_file), luci.util.shellquote(dest), luci.util.shellquote(tmp_file)))
         end
         fs.chmod(dest, 644)
         os.execute("logger -t xc-upload -p daemon.info 'Successfully uploaded geosite.dat to /etc/xc/assets/geosite.dat'")
-        silent_rpcd("switch_source", '{"asset_source":"custom"}')
+        notify_source_switch('{"asset_source":"custom"}')
         luci.http.write('{"code":0,"message":"geosite.dat 规则库已上传并激活生效！"}')
     elseif upload_type == "geoip" then
         if stat.size < 100 * 1024 then
@@ -391,11 +273,11 @@ function act_upload(target_type)
         local dest = ASSET_DIR .. "/geoip.dat"
         os.remove(dest)
         if not fs.move(tmp_file, dest) then
-            os.execute(string.format("cp -f %s %s && rm -f %s", tmp_file, dest, tmp_file))
+            os.execute(string.format("cp -f %s %s && rm -f %s", luci.util.shellquote(tmp_file), luci.util.shellquote(dest), luci.util.shellquote(tmp_file)))
         end
         fs.chmod(dest, 644)
         os.execute("logger -t xc-upload -p daemon.info 'Successfully uploaded geoip.dat to /etc/xc/assets/geoip.dat'")
-        silent_rpcd("switch_source", '{"asset_source":"custom"}')
+        notify_source_switch('{"asset_source":"custom"}')
         luci.http.write('{"code":0,"message":"geoip.dat 规则库已上传并激活生效！"}')
     else
         os.remove(tmp_file)

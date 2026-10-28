@@ -64,6 +64,26 @@ local function sanitize_output(val)
     return val
 end
 
+local function setting(key)
+    if uci_cursor then
+        local v = uci_cursor:get("xc", "main", key)
+        if v ~= nil then return v end
+    end
+    if DEFAULT_SETTINGS[key] ~= nil then
+        return DEFAULT_SETTINGS[key]
+    end
+    return nil
+end
+
+local function check_port_listening(port)
+    local p_num = tonumber(port)
+    if not p_num or p_num <= 0 then return false end
+    local p = io.popen(string.format("netstat -lnt 2>/dev/null | grep ':%d '", p_num))
+    local res = p and p:read("*l")
+    if p then p:close() end
+    return res ~= nil and #res > 0
+end
+
 local CONFIG_FILE = "/var/etc/xc/config.json"
 local COMPAT_CONFIG = ROOT .. "/config.json"
 
@@ -352,13 +372,29 @@ local methods = {
     end,
 
     switch_fixed_node = function(params)
-        local target = params and (params.id or params.fixed_proxy_id)
-        if target == nil or tostring(target) == "" then
-            output_json({ code = 1, message = "invalid fixed node id" })
+        local raw_target = params and (params.id or params.fixed_proxy_id)
+        if raw_target == nil then
+            output_json({ code = 1, message = "missing fixed node target" })
             return
         end
+        local str_target = tostring(raw_target):gsub("^%s+", ""):gsub("%s+$", ""):lower()
+        local valid_target = nil
+        if str_target == "auto" or str_target == "0" then
+            valid_target = "auto"
+        else
+            local id_num = tonumber(str_target)
+            if id_num and id_num > 0 and math.floor(id_num) == id_num then
+                valid_target = tostring(id_num)
+            end
+        end
+
+        if not valid_target then
+            output_json({ code = 1, message = "invalid fixed node target (must be positive integer or 'auto')" })
+            return
+        end
+
         local tmp_log = "/tmp/xc-fixed-switch.log"
-        local ret = os.execute("/usr/bin/xc fixed " .. tostring(target) .. " >" .. tmp_log .. " 2>&1")
+        local ret = os.execute(string.format("/usr/bin/xc fixed %s >%s 2>&1", valid_target, tmp_log))
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
         output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })

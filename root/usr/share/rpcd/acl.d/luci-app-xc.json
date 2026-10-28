@@ -3,24 +3,34 @@
 		"description": "Grant access to xc xray manager",
 		"read": {
 			"ubus": {
-				"luci.xc": [ "*" ]
+				"luci.xc": [
+					"get_status",
+					"get_nodes",
+					"get_settings",
+					"probe_node",
+					"test_health"
+				]
 			},
 			"uci": [ "xc" ],
 			"file": {
-				"/etc/xc/nodes.json": [ "read" ],
-				"/etc/xc/settings.json": [ "read" ],
 				"/etc/xc/current": [ "read" ]
 			}
 		},
 		"write": {
 			"ubus": {
-				"luci.xc": [ "*" ]
+				"luci.xc": [
+					"switch_node",
+					"switch_fixed_node",
+					"save_node",
+					"delete_node",
+					"import_nodes",
+					"switch_source",
+					"save_settings",
+					"restart_service",
+					"stop_service"
+				]
 			},
-			"uci": [ "xc" ],
-			"file": {
-				"/etc/xc/nodes.json": [ "write" ],
-				"/etc/xc/settings.json": [ "write" ]
-			}
+			"uci": [ "xc" ]
 		}
 	}
 }
