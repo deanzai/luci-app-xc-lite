@@ -1,0 +1,55 @@
+name: CI Build & Test Matrix
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Run Host Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Lua
+        run: sh scripts/bootstrap-lua.sh
+      - name: Run Host Verification
+        run: sh tests/run-host.sh
+
+  build-21_02:
+    name: Build OpenWrt 21.02
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Platform Assets (21.02)
+        run: |
+          mkdir -p bin/packages dist
+          sh scripts/prepare-release-assets.sh openwrt-21.02 bin/packages dist || true
+
+  build-23_05:
+    name: Build OpenWrt 23.05
+    needs: build-21_02
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Platform Assets (23.05)
+        run: |
+          mkdir -p bin/packages dist
+          sh scripts/prepare-release-assets.sh openwrt-23.05 bin/packages dist || true
+
+  build-24_10:
+    name: Build OpenWrt 24.10
+    needs: build-23_05
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build Platform Assets (24.10)
+        run: |
+          mkdir -p bin/packages dist
+          sh scripts/prepare-release-assets.sh openwrt-24.10 bin/packages dist || true

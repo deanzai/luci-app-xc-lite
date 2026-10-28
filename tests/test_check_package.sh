@@ -26,11 +26,12 @@ make_multiline() {
 }
 
 run_check() {
-  XC_POT_PATH="$1" XC_PO_PATH="$2" XC_PO2LMO="$3" XC_LUCI_SOURCE_DIR="${4:-luasrc}" \
+  XC_POT_PATH="$1" XC_PO_PATH="$2" XC_PO2LMO="$3" XC_LUCI_SOURCE_DIR="${4:-htdocs}" \
     sh scripts/check-package.sh > "$tmp/output" 2>&1
 }
 
-cp -R luasrc "$tmp/luasrc"
+mkdir -p "$tmp/luasrc"
+cp -R htdocs/* "$tmp/luasrc/"
 cat > "$tmp/luasrc/multiline.lua" <<'EOF'
 local translated = translate(
   "Multiline translate label"
@@ -68,6 +69,9 @@ msgstr ""
 
 msgid "Multiline underscore label"
 msgstr ""
+
+msgid "Warning"
+msgstr ""
 EOF
 cp po/zh_Hans/xc.po "$tmp/source-multiline.po"
 cat >> "$tmp/source-multiline.po" <<'EOF'
@@ -77,6 +81,9 @@ msgstr "多行翻译标签"
 
 msgid "Multiline underscore label"
 msgstr "多行简写标签"
+
+msgid "Warning"
+msgstr "警告"
 EOF
 if ! run_check "$tmp/source-multiline.pot" "$tmp/source-multiline.po" "$po2lmo" "$tmp/luasrc"; then
   echo "FAIL valid multiline LuCI gettext calls were not discovered"
@@ -96,7 +103,8 @@ if ! grep -q '^OK  generated /usr/lib/lua/luci/i18n/xc.zh-cn.lmo$' "$tmp/output"
   failures=$((failures + 1))
 fi
 
-cp -R luasrc "$tmp/crlf-luasrc"
+mkdir -p "$tmp/crlf-luasrc"
+cp -R htdocs/* "$tmp/crlf-luasrc/"
 printf 'local value = true\r\nreturn value\r\n' > "$tmp/crlf-luasrc/crlf.lua"
 if run_check po/templates/xc.pot po/zh_Hans/xc.po "$po2lmo" "$tmp/crlf-luasrc"; then
   echo "FAIL CRLF LuCI source was accepted"

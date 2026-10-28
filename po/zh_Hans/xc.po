@@ -1,35 +1,642 @@
 msgid ""
-msgstr "Content-Type: text/plain; charset=UTF-8"
+msgstr "Content-Type: text/plain; charset=UTF-8\n"
 
-msgid "xc 节点分流"
-msgstr "xc 节点分流"
+msgid "绑定地址: "
+msgstr "绑定地址: "
 
-msgid "xc 节点切换与分流管理器"
-msgstr "xc 节点切换与分流管理器"
+msgid "保存节点"
+msgstr "保存节点"
 
-msgid "服务运行状态"
-msgstr "服务运行状态"
+msgid "保存全局设置"
+msgstr "保存全局设置"
 
-msgid "当前活动节点 (proxy-selected)"
-msgstr "当前活动节点 (proxy-selected)"
+msgid "保存全局设置失败"
+msgstr "保存全局设置失败"
 
-msgid "固定分流节点 (Fixed Proxy)"
-msgstr "固定分流节点 (Fixed Proxy)"
+msgid "保存失败: "
+msgstr "保存失败: "
+
+msgid "本地 SOCKS 说明"
+msgstr "本地 SOCKS 说明"
+
+msgid "编号"
+msgstr "编号"
+
+msgid "编辑"
+msgstr "编辑"
+
+msgid "编辑节点 #"
+msgstr "编辑节点 #"
+
+msgid "并发通道数: "
+msgstr "并发通道数: "
+
+msgid "部署成功"
+msgstr "部署成功"
+
+msgid "操作"
+msgstr "操作"
+
+msgid "操作成功，节点已就绪！"
+msgstr "操作成功，节点已就绪！"
+
+msgid "操作失败，已自动回滚: "
+msgstr "操作失败，已自动回滚: "
 
 msgid "测试双端口连通性"
 msgstr "测试双端口连通性"
 
-msgid "回滚上一节点"
-msgstr "回滚上一节点"
+msgid "测速"
+msgstr "测速"
 
-msgid "添加节点信息"
-msgstr "添加节点信息"
+msgid "测速参数控制"
+msgstr "测速参数控制"
 
-msgid "手动刷新全部测速"
-msgstr "手动刷新全部测速"
+msgid "测速目标 URL (probe_url)"
+msgstr "测速目标 URL (probe_url)"
+
+msgid "测速完成 ("
+msgstr "测速完成 ("
+
+msgid "测速中 ("
+msgstr "测速中 ("
+
+msgid "测速中..."
+msgstr "测速中..."
+
+msgid "测速中 (0/"
+msgstr "测速中 (0/"
+
+msgid "插件版本"
+msgstr "插件版本"
+
+msgid "常用预设: "
+msgstr "常用预设: "
+
+msgid "超时建议 3~5 秒，避免失效节点过久等待；并发建议 2~4，控制路由器瞬时 CPU 与内存压力。"
+msgstr "超时建议 3~5 秒，避免失效节点过久等待；并发建议 2~4，控制路由器瞬时 CPU 与内存压力。"
+
+msgid "超时 / 失败"
+msgstr "超时 / 失败"
+
+msgid "超时时间(秒): "
+msgstr "超时时间(秒): "
+
+msgid "承担普通海外流量 (geosite:geolocation-!cn) 与最终 fallback 出口"
+msgstr "承担普通海外流量 (geosite:geolocation-!cn) 与最终 fallback 出口"
+
+msgid "出口测试 URL (health_url)"
+msgstr "出口测试 URL (health_url)"
+
+msgid "出口检查异常: "
+msgstr "出口检查异常: "
+
+msgid "处理失败"
+msgstr "处理失败"
+
+msgid "错误"
+msgstr "错误"
+
+msgid "代理端口已正常监听！正在刷新面板..."
+msgstr "代理端口已正常监听！正在刷新面板..."
+
+msgid "代理链延迟"
+msgstr "代理链延迟"
+
+msgid "当前活动节点"
+msgstr "当前活动节点"
+
+msgid "当前活动节点 (proxy-selected)"
+msgstr "当前活动节点 (proxy-selected)"
+
+msgid "当前生效路径 / 说明"
+msgstr "当前生效路径 / 说明"
+
+msgid "当前无可用节点进行测速"
+msgstr "当前无可用节点进行测速"
+
+msgid "导入成功！"
+msgstr "导入成功！"
+
+msgid "导入节点链接"
+msgstr "导入节点链接"
+
+msgid "导入失败："
+msgstr "导入失败："
+
+msgid "等待中..."
+msgstr "等待中..."
+
+msgid "端口"
+msgstr "端口"
+
+msgid "服务端口已就绪！"
+msgstr "服务端口已就绪！"
+
+msgid "服务端未返回有效结果"
+msgstr "服务端未返回有效结果"
+
+msgid "服务启动成功！"
+msgstr "服务启动成功！"
+
+msgid "服务启动失败: "
+msgstr "服务启动失败: "
+
+msgid "服务器地址"
+msgstr "服务器地址"
+
+msgid "服务器与端口"
+msgstr "服务器与端口"
+
+msgid "● 服务未运行"
+msgstr "● 服务未运行"
+
+msgid "服务已重载，正在等待代理端口 (7890) 恢复就绪..."
+msgstr "服务已重载，正在等待代理端口 (7890) 恢复就绪..."
+
+msgid "服务运行状态"
+msgstr "服务运行状态"
+
+msgid "服务重启成功！"
+msgstr "服务重启成功！"
+
+msgid "服务重启失败: "
+msgstr "服务重启失败: "
+
+msgid "负责特定服务代理分流与直连，支持手动切换自定义/内置规则库"
+msgstr "负责特定服务代理分流与直连，支持手动切换自定义/内置规则库"
+
+msgid "负责中国大陆 IP 直连与私网绕行，支持手动切换自定义/内置规则库"
+msgstr "负责中国大陆 IP 直连与私网绕行，支持手动切换自定义/内置规则库"
+
+msgid "供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。"
+msgstr "供普通浏览器或 HTTP 客户端使用的正向 HTTP 代理端口。"
+
+msgid "固定承担 OpenAI, YouTube, Google, Twitter, Telegram 等 geosite 访问"
+msgstr "固定承担 OpenAI, YouTube, Google, Twitter, Telegram 等 geosite 访问"
+
+msgid "固定分流"
+msgstr "固定分流"
+
+msgid "固定分流节点 (Fixed Proxy)"
+msgstr "固定分流节点 (Fixed Proxy)"
+
+msgid "固定分流节点 (fixed_proxy_id)"
+msgstr "固定分流节点 (fixed_proxy_id)"
+
+msgid "关闭"
+msgstr "关闭"
+
+msgid "核心/规则来源已切换并重新加载服务！"
+msgstr "核心/规则来源已切换并重新加载服务！"
+
+msgid "核心文件或路由规则丢失，服务无法正常启动！"
+msgstr "核心文件或路由规则丢失，服务无法正常启动！"
+
+msgid "核心与规则组件"
+msgstr "核心与规则组件"
+
+msgid "核心组件与规则"
+msgstr "核心组件与规则"
+
+msgid "核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)"
+msgstr "核心组件与规则文件管理 (/etc/xc/bin, /etc/xc/assets)"
+
+msgid "活动节点或固定分流节点不可删除"
+msgstr "活动节点或固定分流节点不可删除"
+
+msgid "极优"
+msgstr "极优"
+
+msgid "监听端口: "
+msgstr "监听端口: "
+
+msgid "检测到以下必要组件缺失："
+msgstr "检测到以下必要组件缺失："
+
+msgid "健康测试代理地址 (proxy_host)"
+msgstr "健康测试代理地址 (proxy_host)"
+
+msgid "健康检查"
+msgstr "健康检查"
+
+msgid "健康检查通过：双端口出口访问正常！"
+msgstr "健康检查通过：双端口出口访问正常！"
+
+msgid "较慢"
+msgstr "较慢"
+
+msgid "节点备注名称"
+msgstr "节点备注名称"
+
+msgid "节点管理与测速"
+msgstr "节点管理与测速"
+
+msgid "节点名称"
+msgstr "节点名称"
 
 msgid "节点清单与管理 (/etc/xc/nodes.json)"
 msgstr "节点清单与管理 (/etc/xc/nodes.json)"
 
-msgid "全局运行参数 (/etc/xc/settings.json)"
-msgstr "全局运行参数 (/etc/xc/settings.json)"
+msgid "节点信息已保存成功！"
+msgstr "节点信息已保存成功！"
+
+msgid "节点已删除"
+msgstr "节点已删除"
+
+msgid "节点 ID (数字编号)"
+msgstr "节点 ID (数字编号)"
+
+msgid "节点 RTT 延迟测试目标地址，需返回 HTTP 204 或 200 状态码。"
+msgstr "节点 RTT 延迟测试目标地址，需返回 HTTP 204 或 200 状态码。"
+
+msgid "就绪 (xray: "
+msgstr "就绪 (xray: "
+
+msgid "开启后服务随路由器系统开机自动拉起与恢复；取消勾选后保存将停止服务并注销开机自启。"
+msgstr "开启后服务随路由器系统开机自动拉起与恢复；取消勾选后保存将停止服务并注销开机自启。"
+
+msgid "开始导入"
+msgstr "开始导入"
+
+msgid "客户端监听端口"
+msgstr "客户端监听端口"
+
+msgid "连接中断"
+msgstr "连接中断"
+
+msgid "良好"
+msgstr "良好"
+
+msgid " 吗？系统将自动重载 Xray 进程生效。"
+msgstr " 吗？系统将自动重载 Xray 进程生效。"
+
+msgid "批量导入节点链接"
+msgstr "批量导入节点链接"
+
+msgid "启动服务"
+msgstr "启动服务"
+
+msgid "▶ 启动服务"
+msgstr "▶ 启动服务"
+
+msgid "启用服务与开机自启"
+msgstr "启用服务与开机自启"
+
+msgid "启用 xc 代理服务并开启开机自动启动 (/etc/rc.d/S95xc)"
+msgstr "启用 xc 代理服务并开启开机自动启动 (/etc/rc.d/S95xc)"
+
+msgid "切换"
+msgstr "切换"
+
+msgid "切换失败："
+msgstr "切换失败："
+
+msgid "切换为内置规则库"
+msgstr "切换为内置规则库"
+
+msgid "切换为内置核心"
+msgstr "切换为内置核心"
+
+msgid "切换为自定义规则"
+msgstr "切换为自定义规则"
+
+msgid "切换为自定义规则库"
+msgstr "切换为自定义规则库"
+
+msgid "切换为自定义核心"
+msgstr "切换为自定义核心"
+
+msgid "切为系统内置"
+msgstr "切为系统内置"
+
+msgid "轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。"
+msgstr "轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。"
+
+msgid "请求超时"
+msgstr "请求超时"
+
+msgid "请求异常："
+msgstr "请求异常："
+
+msgid "请完整填写节点名称、服务器地址与端口！"
+msgstr "请完整填写节点名称、服务器地址与端口！"
+
+msgid "请先上传自定义规则库后即可一键切换"
+msgstr "请先上传自定义规则库后即可一键切换"
+
+msgid "请先上传自定义核心后即可一键切换"
+msgstr "请先上传自定义核心后即可一键切换"
+
+msgid "请在文本框中粘贴至少一个节点链接或节点订阅内容！"
+msgstr "请在文本框中粘贴至少一个节点链接或节点订阅内容！"
+
+msgid "。请在下方「核心组件与规则文件管理」区域上传对应的文件。若已上传或安装，请确认文件路径及可执行权限。系统错误已同步输出至系统日志 (logread)。"
+msgstr "。请在下方「核心组件与规则文件管理」区域上传对应的文件。若已上传或安装，请确认文件路径及可执行权限。系统错误已同步输出至系统日志 (logread)。"
+
+msgid "取消"
+msgstr "取消"
+
+msgid "取消上传"
+msgstr "取消上传"
+
+msgid "⚡ 全部测速"
+msgstr "⚡ 全部测速"
+
+msgid "全部节点测速已完成！"
+msgstr "全部节点测速已完成！"
+
+msgid "全局基础设置"
+msgstr "全局基础设置"
+
+msgid "全局基础设置 (/etc/xc/settings.json)"
+msgstr "全局基础设置 (/etc/xc/settings.json)"
+
+msgid "全局设置已成功保存！服务已停止并关闭开机自启。"
+msgstr "全局设置已成功保存！服务已停止并关闭开机自启。"
+
+msgid "全局设置已成功保存！开机自启已就绪，Xray 核心已平滑重载生效。"
+msgstr "全局设置已成功保存！开机自启已就绪，Xray 核心已平滑重载生效。"
+
+msgid "● 缺失 (未安装)"
+msgstr "● 缺失 (未安装)"
+
+msgid "确定停止服务吗？停止后代理端口将暂停监听。"
+msgstr "确定停止服务吗？停止后代理端口将暂停监听。"
+
+msgid "确定要 "
+msgstr "确定要 "
+
+msgid "确定要删除节点 #"
+msgstr "确定要删除节点 #"
+
+msgid "删除"
+msgstr "删除"
+
+msgid "删除节点"
+msgstr "删除节点"
+
+msgid "删除失败: "
+msgstr "删除失败: "
+
+msgid "上传安装失败："
+msgstr "上传安装失败："
+
+msgid "上传并部署 "
+msgstr "上传并部署 "
+
+msgid " 上传并部署成功！"
+msgstr " 上传并部署成功！"
+
+msgid "上传超时"
+msgstr "上传超时"
+
+msgid "上传请求超时："
+msgstr "上传请求超时："
+
+msgid "上传已取消"
+msgstr "上传已取消"
+
+msgid "上传 geoip.dat"
+msgstr "上传 geoip.dat"
+
+msgid "上传 geosite.dat"
+msgstr "上传 geosite.dat"
+
+msgid "上传 Xray 核心"
+msgstr "上传 Xray 核心"
+
+msgid "使用中"
+msgstr "使用中"
+
+msgid "锁定为系统内置，不再提示保底"
+msgstr "锁定为系统内置，不再提示保底"
+
+msgid "添加节点信息"
+msgstr "添加节点信息"
+
+msgid "添加新节点信息"
+msgstr "添加新节点信息"
+
+msgid "⏹ 停止"
+msgstr "⏹ 停止"
+
+msgid "停止测速"
+msgstr "停止测速"
+
+msgid "网络连接错误："
+msgstr "网络连接错误："
+
+msgid "网络异常"
+msgstr "网络异常"
+
+msgid "网络异常："
+msgstr "网络异常："
+
+msgid "未测速"
+msgstr "未测速"
+
+msgid "未监听"
+msgstr "未监听"
+
+msgid "未配置"
+msgstr "未配置"
+
+msgid "未上传自定义"
+msgstr "未上传自定义"
+
+msgid "未选择"
+msgstr "未选择"
+
+msgid "未选择 (节点列表为空)"
+msgstr "未选择 (节点列表为空)"
+
+msgid "未找到 (/etc/xc/assets/geoip.dat, /usr/share/xray/geoip.dat)"
+msgstr "未找到 (/etc/xc/assets/geoip.dat, /usr/share/xray/geoip.dat)"
+
+msgid "未找到 (/etc/xc/assets/geosite.dat, /usr/share/xray/geosite.dat)"
+msgstr "未找到 (/etc/xc/assets/geosite.dat, /usr/share/xray/geosite.dat)"
+
+msgid "未找到 (/etc/xc/bin/xray, /usr/bin/xray)"
+msgstr "未找到 (/etc/xc/bin/xray, /usr/bin/xray)"
+
+msgid "未知错误"
+msgstr "未知错误"
+
+msgid "文件丢失"
+msgstr "文件丢失"
+
+msgid "文件数据已上传完毕，正在服务端写入并校验架构与权限..."
+msgstr "文件数据已上传完毕，正在服务端写入并校验架构与权限..."
+
+msgid "文件体积较大或网络较慢导致请求超时，请重试。"
+msgstr "文件体积较大或网络较慢导致请求超时，请重试。"
+
+msgid "文件校验通过并已就绪！正在确认核心监听端口..."
+msgstr "文件校验通过并已就绪！正在确认核心监听端口..."
+
+msgid "无法连接至路由器接口，请检查网络连接或刷新页面重新登录。"
+msgstr "无法连接至路由器接口，请检查网络连接或刷新页面重新登录。"
+
+msgid "○ 系统保底生效中 (未上传自定义)"
+msgstr "○ 系统保底生效中 (未上传自定义)"
+
+msgid "校验未通过"
+msgstr "校验未通过"
+
+msgid "协议类型"
+msgstr "协议类型"
+
+msgid "选择 warning/error/none 时将自动静默每笔请求连接流水 (from ... accepted ...)，防止系统日志刷屏；选择 info 时将记录详细连接请求来源与分流走向。保存后系统将自动平滑重载 Xray 核心生效。"
+msgstr "选择 warning/error/none 时将自动静默每笔请求连接流水 (from ... accepted ...)，防止系统日志刷屏；选择 info 时将记录详细连接请求来源与分流走向。保存后系统将自动平滑重载 Xray 核心生效。"
+
+msgid "已停止测速"
+msgstr "已停止测速"
+
+msgid "● 已选用 (系统内置)"
+msgstr "● 已选用 (系统内置)"
+
+msgid "● 已选用 (自定义规则)"
+msgstr "● 已选用 (自定义规则)"
+
+msgid "● 已选用 (自定义核心)"
+msgstr "● 已选用 (自定义核心)"
+
+msgid "已由用户手动取消上传。"
+msgstr "已由用户手动取消上传。"
+
+msgid "异常：有必要组件缺失"
+msgstr "异常：有必要组件缺失"
+
+msgid "暂无节点信息，请点击下方「+ 添加节点信息」按钮手动添加节点。"
+msgstr "暂无节点信息，请点击下方「+ 添加节点信息」按钮手动添加节点。"
+
+msgid "暂无可用节点"
+msgstr "暂无可用节点"
+
+msgid "正常监听"
+msgstr "正常监听"
+
+msgid "正在测试 SOCKS 与 HTTP 代理出口连通性..."
+msgstr "正在测试 SOCKS 与 HTTP 代理出口连通性..."
+
+msgid "正在导入..."
+msgstr "正在导入..."
+
+msgid "正在等待代理端口恢复就绪"
+msgstr "正在等待代理端口恢复就绪"
+
+msgid "正在高速上传中"
+msgstr "正在高速上传中"
+
+msgid "正在解析链接并写入系统配置..."
+msgstr "正在解析链接并写入系统配置..."
+
+msgid "正在连接路由器并准备上传..."
+msgstr "正在连接路由器并准备上传..."
+
+msgid "正在平滑重载 Xray 核心服务并执行连通性校验..."
+msgstr "正在平滑重载 Xray 核心服务并执行连通性校验..."
+
+msgid "正在启动当前节点"
+msgstr "正在启动当前节点"
+
+msgid "正在启动服务"
+msgstr "正在启动服务"
+
+msgid "正在启动 Xray 核心服务并执行连通性校验..."
+msgstr "正在启动 Xray 核心服务并执行连通性校验..."
+
+msgid "正在切换到节点 #"
+msgstr "正在切换到节点 #"
+
+msgid "正在切换节点"
+msgstr "正在切换节点"
+
+msgid "正在上传中..."
+msgstr "正在上传中..."
+
+msgid "正在刷新页面..."
+msgstr "正在刷新页面..."
+
+msgid "正在执行 Xray 配置校验、平滑切换及全链路健康测试，请稍候..."
+msgstr "正在执行 Xray 配置校验、平滑切换及全链路健康测试，请稍候..."
+
+msgid "正在重启服务"
+msgstr "正在重启服务"
+
+msgid "支持网页直接上传 Xray 核心（支持 Linux ELF 或 .zip / .tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。"
+msgstr "支持网页直接上传 Xray 核心（支持 Linux ELF 或 .zip / .tar.gz 自动解压）及 routing 规则库。系统内置核心与规则作为安全保底，可自由手动切换来源。"
+
+msgid "支持 Linux ELF 程序或 .zip / .tar.gz 压缩包上传（自动解压并校验），内置核心自动保底"
+msgstr "支持 Linux ELF 程序或 .zip / .tar.gz 压缩包上传（自动解压并校验），内置核心自动保底"
+
+msgid "支持 TCP/UDP，客户端配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。"
+msgstr "支持 TCP/UDP，客户端配置为 SOCKS5h。默认 127.0.0.1 仅本机，填 0.0.0.0 可供局域网使用。"
+
+msgid "支持 vless://, vmess://, trojan://, ss://, socks5:// 等常见链接或包含节点的订阅文本，每行一个链接："
+msgstr "支持 vless://, vmess://, trojan://, ss://, socks5:// 等常见链接或包含节点的订阅文本，每行一个链接："
+
+msgid "指定负责承担 YouTube, Google, OpenAI 等 geosite 流量的固定节点"
+msgstr "指定负责承担 YouTube, Google, OpenAI 等 geosite 流量的固定节点"
+
+msgid "⟳ 重启服务"
+msgstr "⟳ 重启服务"
+
+msgid "状态"
+msgstr "状态"
+
+msgid "状态 / 模式"
+msgstr "状态 / 模式"
+
+msgid "组件名称"
+msgstr "组件名称"
+
+msgid "组件正常"
+msgstr "组件正常"
+
+msgid "debug (全量内部调试)"
+msgstr "debug (全量内部调试)"
+
+msgid "error (仅记录错误)"
+msgstr "error (仅记录错误)"
+
+msgid "GeoIP IP规则库 (geoip.dat)"
+msgstr "GeoIP IP规则库 (geoip.dat)"
+
+msgid "GeoSite 域名规则库 (geosite.dat)"
+msgstr "GeoSite 域名规则库 (geosite.dat)"
+
+msgid "HTTP 代理接口"
+msgstr "HTTP 代理接口"
+
+msgid "info (排查推荐：记录详细连接与路由分流)"
+msgstr "info (排查推荐：记录详细连接与路由分流)"
+
+msgid "NaiveProxy 需已在路由器本地运行，默认地址 127.0.0.1，端口一般为 45321~45325。"
+msgstr "NaiveProxy 需已在路由器本地运行，默认地址 127.0.0.1，端口一般为 45321~45325。"
+
+msgid "none (静默无日志)"
+msgstr "none (静默无日志)"
+
+msgid "SOCKS 代理接口"
+msgstr "SOCKS 代理接口"
+
+msgid "VLESS REALITY 协议必须填写 UUID 和 Public Key！"
+msgstr "VLESS REALITY 协议必须填写 UUID 和 Public Key！"
+
+msgid "warning (默认推荐：静默连接流水，仅告警)"
+msgstr "warning (默认推荐：静默连接流水，仅告警)"
+
+msgid "xc 节点切换与分流管理器"
+msgstr "xc 节点切换与分流管理器"
+
+msgid "Xray 核心程序 (xray)"
+msgstr "Xray 核心程序 (xray)"
+
+msgid "Xray 系统日志级别 (log_level)"
+msgstr "Xray 系统日志级别 (log_level)"
+
+msgid "● Xray 运行中 (PID: "
+msgstr "● Xray 运行中 (PID: "
+

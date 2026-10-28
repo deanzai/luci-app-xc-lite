@@ -17,8 +17,10 @@ check Makefile
 check root/etc/config/xc
 check root/etc/init.d/xc
 check root/etc/hotplug.d/iface/95-xc
-check root/etc/uci-defaults/luci-xc
+check root/etc/uci-defaults/80_luci-app-xc
 check root/usr/bin/xc
+check root/usr/libexec/rpcd/luci.xc
+check root/usr/lib/lua/luci/controller/xc.lua
 check root/usr/lib/lua/xc/schema.lua
 check root/usr/lib/lua/xc/importer.lua
 check root/usr/lib/lua/xc/generator.lua
@@ -32,20 +34,10 @@ check root/usr/lib/lua/xc/coremanager.lua
 check root/usr/lib/lua/xc/access.lua
 check root/usr/lib/lua/xc/assetmanager.lua
 check root/usr/lib/lua/xc/assetjob.lua
-check luasrc/controller/xc.lua
-check luasrc/model/cbi/xc/settings.lua
-check luasrc/model/cbi/xc/nodes.lua
-check luasrc/model/cbi/xc/node.lua
-check luasrc/model/cbi/xc/log.lua
-check luasrc/model/cbi/xc/core.lua
-check luasrc/model/cbi/xc/access.lua
-check luasrc/view/xc/status.htm
-check luasrc/view/xc/node_table.htm
-check luasrc/view/xc/ping.htm
-check luasrc/view/xc/import.htm
-check luasrc/view/xc/log.htm
-check luasrc/view/xc/core.htm
-check luasrc/view/xc/access.htm
+check root/usr/share/luci/menu.d/luci-app-xc.json
+check root/usr/share/rpcd/acl.d/luci-app-xc.json
+check root/usr/share/ucitrack/luci-app-xc.json
+check htdocs/luci-static/resources/view/xc/overview.js
 check po/templates/xc.pot
 check po/zh_Hans/xc.po
 check scripts/prepare-release-assets.sh
@@ -61,14 +53,21 @@ mkdir "$translation_tmp" || exit 1
 trap 'rm -rf "$translation_tmp"' EXIT HUP INT TERM
 pot_path="${XC_POT_PATH:-po/templates/xc.pot}"
 po_path="${XC_PO_PATH:-po/zh_Hans/xc.po}"
-source_dir="${XC_LUCI_SOURCE_DIR:-luasrc}"
+source_dir="${XC_LUCI_SOURCE_DIR:-}"
+if [ -z "$source_dir" ]; then
+  if [ -d htdocs ]; then
+    source_dir="htdocs"
+  else
+    source_dir="luasrc"
+  fi
+fi
 
 {
   printf '%s\n' Makefile "$pot_path" "$po_path"
   [ ! -d root ] || find root -type f -print
   [ ! -d scripts ] || find scripts -type f -name '*.sh' -print
   [ ! -d tests ] || find tests -type f -name '*.sh' -print
-  [ ! -d "$source_dir" ] || find "$source_dir" -type f \( -name '*.lua' -o -name '*.htm' \) -print
+  [ ! -d "$source_dir" ] || find "$source_dir" -type f \( -name '*.lua' -o -name '*.htm' -o -name '*.js' \) -print
 } | sort -u > "$translation_tmp/lf-files"
 carriage_return=$(printf '\r')
 while IFS= read -r text_path; do
@@ -84,7 +83,7 @@ if [ ! -d "$source_dir" ]; then
   failures=$(( failures + 1 ))
   : > "$translation_tmp/source"
 else
-  find "$source_dir" -type f \( -name '*.lua' -o -name '*.htm' \) -exec awk '
+  find "$source_dir" -type f \( -name '*.lua' -o -name '*.htm' -o -name '*.js' \) -exec awk '
   function identifier(c) { return c ~ /^[A-Za-z0-9_]$/ }
   function long_level(text, position, comment, cursor, level) {
     cursor = position + (comment ? 2 : 0)
@@ -145,7 +144,10 @@ else
         if (c == "\n") { mode = "normal"; stage = 0; captured = ""; i++; continue }
         if (escaped) { captured = captured decoded_escape(c); escaped = 0; i++; continue }
         if (c == "\\") { escaped = 1; i++; continue }
-        if (c == "\"") { mode = "normal"; stage = 3; i++; continue }
+        if (c == quote) {
+          print captured
+          mode = "normal"; stage = 0; captured = ""; i++; continue
+        }
         captured = captured c
         i++
         continue
@@ -158,13 +160,8 @@ else
       }
       if (stage == 2) {
         if (c ~ /^[[:space:]]$/) { i++; continue }
-        if (c == "\"") { mode = "capture"; captured = ""; escaped = 0; i++; continue }
+        if (c == "\"" || c == "\047") { mode = "capture"; quote = c; captured = ""; escaped = 0; i++; continue }
         stage = 0
-      }
-      if (stage == 3) {
-        if (c ~ /^[[:space:]]$/) { i++; continue }
-        if (c == ")") { print captured; stage = 0; captured = ""; i++; continue }
-        stage = 0; captured = ""
       }
 
       if (substr(line, i, 3) == "<%:") {
@@ -290,7 +287,7 @@ if ! awk -F '\t' '
   {
     id = $1; value = $2
     if (value == "") { print "empty translation: " id; failed = 1 }
-    if (value == id && id != "XC" && id != "Xray" && id != "OK" && id != "UUID" && id != "HTTP" && id != "SOCKS5") {
+    if (value == id && id !~ /[\x80-\xff]/ && id != "XC" && id != "Xray" && id != "OK" && id != "UUID" && id != "HTTP" && id != "SOCKS5") {
       print "untranslated entry: " id; failed = 1
     }
   }

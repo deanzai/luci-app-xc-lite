@@ -1089,16 +1089,18 @@ return view.extend({
 		var shortidInput = E('input', { 'type': 'text', 'class': 'cbi-input-text', 'value': curShortid, 'placeholder': '可留空', 'style': 'width:100%;' });
 
 		var fpSelect = E('select', { 'class': 'cbi-input-select', 'style': 'width:100%;' }, [
-			E('option', { 'value': 'chrome', 'selected': curFp === 'chrome' }, 'chrome'),
-			E('option', { 'value': 'firefox', 'selected': curFp === 'firefox' }, 'firefox'),
-			E('option', { 'value': 'safari', 'selected': curFp === 'safari' }, 'safari'),
-			E('option', { 'value': 'edge', 'selected': curFp === 'edge' }, 'edge')
+			E('option', { 'value': 'chrome', 'selected': (curFp === 'chrome') ? '' : null }, 'chrome'),
+			E('option', { 'value': 'firefox', 'selected': (curFp === 'firefox') ? '' : null }, 'firefox'),
+			E('option', { 'value': 'safari', 'selected': (curFp === 'safari') ? '' : null }, 'safari'),
+			E('option', { 'value': 'edge', 'selected': (curFp === 'edge') ? '' : null }, 'edge')
 		]);
+		fpSelect.value = curFp || 'chrome';
 
 		var flowSelect = E('select', { 'class': 'cbi-input-select', 'style': 'width:100%;' }, [
-			E('option', { 'value': 'xtls-rprx-vision', 'selected': curFlow === 'xtls-rprx-vision' }, 'xtls-rprx-vision'),
-			E('option', { 'value': 'none', 'selected': curFlow === 'none' }, 'none')
+			E('option', { 'value': 'xtls-rprx-vision', 'selected': (curFlow === 'xtls-rprx-vision') ? '' : null }, 'xtls-rprx-vision'),
+			E('option', { 'value': 'none', 'selected': (curFlow === 'none') ? '' : null }, 'none')
 		]);
+		flowSelect.value = curFlow || 'xtls-rprx-vision';
 
 		var realitySection = E('div', { 'id': 'modal-reality-fields', 'style': (curType === 'VLESS REALITY') ? 'display:block;' : 'display:none;' }, [
 			E('div', { 'class': 'cbi-value' }, [
@@ -1152,9 +1154,10 @@ return view.extend({
 				}
 			}
 		}, [
-			E('option', { 'value': 'VLESS REALITY', 'selected': curType === 'VLESS REALITY' }, 'VLESS REALITY'),
-			E('option', { 'value': 'NaiveProxy SOCKS5', 'selected': curType === 'NaiveProxy SOCKS5' }, 'NaiveProxy SOCKS5')
+			E('option', { 'value': 'VLESS REALITY', 'selected': (curType === 'VLESS REALITY') ? '' : null }, 'VLESS REALITY'),
+			E('option', { 'value': 'NaiveProxy SOCKS5', 'selected': (curType === 'NaiveProxy SOCKS5') ? '' : null }, 'NaiveProxy SOCKS5')
 		]);
+		typeSelect.value = curType || 'VLESS REALITY';
 
 		var body = E('div', { 'class': 'cbi-map' }, [
 			E('div', { 'class': 'cbi-section-node' }, [
@@ -1259,17 +1262,21 @@ return view.extend({
 		var probeTimeout = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_timeout) || 5 });
 		var probeConcurrency = E('input', { 'type': 'number', 'class': 'cbi-input-text', 'style': 'width:100px;', 'value': (settingsData && settingsData.probe_concurrency) || 3 });
 
+		var curLogLevel = (settingsData && settingsData.log_level) || 'warning';
 		var logLevelSelect = E('select', { 'class': 'cbi-input-select', 'style': 'width:280px;' }, [
-			E('option', { 'value': 'none', 'selected': (settingsData && settingsData.log_level) === 'none' }, _('none (静默无日志)')),
-			E('option', { 'value': 'error', 'selected': (settingsData && settingsData.log_level) === 'error' }, _('error (仅记录错误)')),
-			E('option', { 'value': 'warning', 'selected': !settingsData || !settingsData.log_level || settingsData.log_level === 'warning' }, _('warning (默认推荐：静默连接流水，仅告警)')),
-			E('option', { 'value': 'info', 'selected': (settingsData && settingsData.log_level) === 'info' }, _('info (排查推荐：记录详细连接与路由分流)')),
-			E('option', { 'value': 'debug', 'selected': (settingsData && settingsData.log_level) === 'debug' }, _('debug (全量内部调试)'))
+			E('option', { 'value': 'none', 'selected': (curLogLevel === 'none') ? '' : null }, _('none (静默无日志)')),
+			E('option', { 'value': 'error', 'selected': (curLogLevel === 'error') ? '' : null }, _('error (仅记录错误)')),
+			E('option', { 'value': 'warning', 'selected': (curLogLevel === 'warning') ? '' : null }, _('warning (默认推荐：静默连接流水，仅告警)')),
+			E('option', { 'value': 'info', 'selected': (curLogLevel === 'info') ? '' : null }, _('info (排查推荐：记录详细连接与路由分流)')),
+			E('option', { 'value': 'debug', 'selected': (curLogLevel === 'debug') ? '' : null }, _('debug (全量内部调试)'))
 		]);
+		logLevelSelect.value = curLogLevel;
 
 		var fixedSelect = E('select', { 'class': 'cbi-input-select' });
 		var nodes = (nodesData && nodesData.nodes) ? nodesData.nodes : [];
-		var curFixed = nodesData ? nodesData.fixed_proxy_id : null;
+		var curFixed = (settingsData && settingsData.fixed_proxy_id !== undefined && settingsData.fixed_proxy_id !== '')
+			? settingsData.fixed_proxy_id
+			: (nodesData ? nodesData.fixed_proxy_id : null);
 		if ((!curFixed || nodes.length <= 1) && nodes.length > 0) {
 			curFixed = nodes[0].id;
 		}
@@ -1277,8 +1284,14 @@ return view.extend({
 			fixedSelect.appendChild(E('option', { 'value': '' }, _('暂无可用节点')));
 		} else {
 			nodes.forEach(function(n) {
-				fixedSelect.appendChild(E('option', { 'value': n.id, 'selected': Number(n.id) === Number(curFixed) }, '#' + n.id + ' - ' + n.name + ' (' + n.type + ')'));
+				fixedSelect.appendChild(E('option', {
+					'value': n.id,
+					'selected': (Number(n.id) === Number(curFixed)) ? '' : null
+				}, '#' + n.id + ' - ' + n.name + ' (' + n.type + ')'));
 			});
+			if (curFixed !== null && curFixed !== undefined) {
+				fixedSelect.value = String(curFixed);
+			}
 		}
 
 		return E('div', { 'class': 'cbi-section' }, [

@@ -23,7 +23,8 @@ local DEFAULT_SETTINGS = {
     probe_concurrency = 3,
     core_source = "custom",
     asset_source = "custom",
-    log_level = "warning"
+    log_level = "warning",
+    fixed_proxy_id = 1
 }
 
 local function read_file(path)

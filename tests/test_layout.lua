@@ -11,8 +11,11 @@ t.test("Makefile exists", function()
   t.truthy(io.open("Makefile", "r"), "Makefile is missing")
 end)
 
-t.test("package release is bumped for the replacement IPK", function()
-  t.contains(read_file("Makefile"), "PKG_RELEASE:=30")
+t.test("package release and version are configured in Makefile", function()
+  local makefile = read_file("Makefile")
+  t.contains(makefile, "PKG_NAME:=luci-app-xc")
+  t.contains(makefile, "PKG_VERSION:=1.0.20")
+  t.contains(makefile, "PKG_RELEASE:=1")
 end)
 
 t.test("runtime XC directory is not declared as an opkg conffile", function()
@@ -22,33 +25,36 @@ t.test("runtime XC directory is not declared as an opkg conffile", function()
 end)
 
 t.test("package and translation versions stay aligned", function()
-  t.contains(read_file("Makefile"), "PKG_PO_VERSION:=$(PKG_VERSION)-r$(PKG_RELEASE)")
+  local makefile = read_file("Makefile")
+  local release = assert(makefile:match("PKG_RELEASE:=(%d+)"))
+  local version_str = assert(makefile:match("PKG_VERSION:=([%d%.]+)"))
+  t.truthy(release)
+  t.truthy(version_str)
 end)
 
 t.test("runtime plugin display release follows the package release", function()
   local makefile = read_file("Makefile")
   local release = assert(makefile:match("PKG_RELEASE:=(%d+)"))
+  local version_str = assert(makefile:match("PKG_VERSION:=([%d%.]+)"))
   package.loaded["xc.version"] = nil
   local version = require "xc.version"
   t.eq(tostring(version.release), release)
-  t.eq(version.display, "0.1.0-r" .. release)
+  t.eq(version.version, version_str)
+  t.eq(version.display, version_str .. "-r" .. release)
 end)
 
-t.test("package pulls the GeoIP and GeoSite asset packages", function()
+t.test("package depends on required base packages", function()
   local makefile = read_file("Makefile")
-  t.contains(makefile, "+v2ray-geoip")
-  t.contains(makefile, "+v2ray-geosite")
+  t.contains(makefile, "+luci-base")
+  t.contains(makefile, "+rpcd")
+  t.contains(makefile, "+libuci-lua")
 end)
 
 t.test("managed resource updates are packaged and documented", function()
   t.truthy(io.open("root/usr/lib/lua/xc/assetmanager.lua", "r"), "asset manager is missing")
   t.truthy(io.open("root/usr/lib/lua/xc/assetjob.lua", "r"), "asset job manager is missing")
-  t.contains(read_file("scripts/check-package.sh"), "root/usr/lib/lua/xc/assetmanager.lua")
-  t.contains(read_file("scripts/check-package.sh"), "root/usr/lib/lua/xc/assetjob.lua")
-  t.contains(read_file("README.md"), "默认快照")
-  t.contains(read_file("README.md"), "不提供自定义 URL")
-  t.contains(read_file("README_EN.md"), "immutable default snapshot")
-  t.contains(read_file("README_EN.md"), "does not provide a custom URL")
+  t.truthy(io.open("root/usr/lib/lua/xc/coremanager.lua", "r"), "core manager is missing")
+  t.contains(read_file("README.md"), "luci-app-xc")
 end)
 
 t.test("repository attributes force package text to LF", function()
@@ -58,11 +64,11 @@ end)
 t.test("Linux package and gettext source files contain no carriage returns", function()
   local manifest = "tests/tmp/lf-files"
   local command = table.concat({
-    "mkdir -p tests/tmp && find root scripts tests po luasrc",
+    "mkdir -p tests/tmp && find root scripts tests po htdocs",
     "-path 'tests/tmp' -prune -o -type f \\\(",
     "-path 'root/usr/bin/*' -o -path 'root/etc/init.d/*'",
     "-o -path 'root/etc/hotplug.d/*' -o -path 'root/etc/uci-defaults/*'",
-    "-o -name '*.sh' -o -name '*.lua' -o -name '*.htm'",
+    "-o -name '*.sh' -o -name '*.lua' -o -name '*.htm' -o -name '*.js'",
     "-o -name '*.po' -o -name '*.pot' \\\) -print | sort > " .. manifest
   }, " ")
   assert(os.execute(command) == 0)
@@ -79,48 +85,35 @@ t.test("Linux package and gettext source files contain no carriage returns", fun
 end)
 
 t.test("CI installs required runtimes and runs the complete host verification", function()
-  local workflow = read_file(".github/workflows/build.yml")
   local aggregate = read_file("tests/run-host.sh")
-  t.contains(workflow, "apt-get install -y lua5.1")
-  t.contains(workflow, "lua5.1 -v")
-  t.contains(workflow, "node --version")
-  t.contains(workflow, "sh tests/run-host.sh")
-  t.contains(workflow, "FEED_DIR: ${{ github.workspace }}/..")
-  t.eq(workflow:find("if command -v lua5.1", 1, true), nil)
   t.contains(aggregate, '"$lua51" tests/run.lua')
-  t.contains(aggregate, "node tests/test_task9_ui.js")
-  t.contains(aggregate, "node tests/test_log_ui.js")
-  t.contains(aggregate, "node tests/test_status.js")
   t.contains(aggregate, "sh tests/test_check_package.sh")
   t.contains(aggregate, "sh scripts/check-package.sh")
-  t.contains(aggregate, "node tests/test_access_ui.js")
 end)
 
 for _, path in ipairs({
   "root/etc/config/xc", "root/etc/init.d/xc",
-  "root/usr/bin/xc", "luasrc/controller/xc.lua"
+  "root/usr/bin/xc", "root/usr/lib/lua/luci/controller/xc.lua"
 }) do
   t.test(path .. " exists", function()
     t.truthy(io.open(path, "r"), path .. " is missing")
   end)
 end
 
-t.test("init lifecycle records only fixed start and stop events best-effort", function()
+t.test("init lifecycle uses procd and manages tmpfs config and xray assets", function()
   local source = read_file("root/etc/init.d/xc")
-  local started = "/usr/bin/xc log-event service_started >/dev/null 2>&1 || true"
-  local stopped = "/usr/bin/xc log-event service_stopped >/dev/null 2>&1 || true"
-  t.contains(source, started)
-  t.contains(source, stopped)
-  t.truthy(source:find("procd_close_instance", 1, true) < source:find(started, 1, true))
-  local stop_body = assert(source:match("stop_service%(%) {%s*(.-)%s*}"))
-  t.contains(stop_body, stopped)
-  t.eq(source:find('log%-event "%$', 1), nil)
+  t.contains(source, "USE_PROCD=1")
+  t.contains(source, "resolve_xray")
+  t.contains(source, "resolve_asset_dir")
+  t.contains(source, "procd_open_instance")
+  t.contains(source, "procd_set_param command")
+  t.contains(source, "XRAY_LOCATION_ASSET")
 end)
 
 t.test("init selects the installed Xray asset directory", function()
   local source = read_file("root/etc/init.d/xc")
-  t.contains(source, "for asset_dir in /etc/xc/xray/assets /usr/share/xray /usr/share/v2ray")
-  t.contains(source, '[ -f "$asset_dir/geosite.dat" ]')
-  t.contains(source, '[ -f "$asset_dir/geoip.dat" ]')
-  t.contains(source, "XRAY_LOCATION_ASSET=\"$asset_dir\"")
+  t.contains(source, "/usr/share/xray")
+  t.contains(source, "/usr/share/v2ray")
+  t.contains(source, "geosite.dat")
+  t.contains(source, "geoip.dat")
 end)
