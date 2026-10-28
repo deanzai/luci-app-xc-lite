@@ -21,7 +21,7 @@ local COMPAT_CURRENT = ROOT .. "/current"
 local PREV_CONFIG = VAR_DIR .. "/config.previous"
 local PREV_CURRENT = VAR_DIR .. "/current.previous"
 
-local APP_VERSION = "1.0.18-1"
+local APP_VERSION = "1.0.19-1"
 
 local DEFAULT_SETTINGS = {
     enabled = "1",
@@ -511,8 +511,13 @@ local function nodes_data()
             if n.id then table.insert(nodes, n) end
         end)
         table.sort(nodes, function(a, b) return (a.id or 0) < (b.id or 0) end)
-        local fixed_id = tonumber(uci_cursor:get("xc", "main", "fixed_proxy_id"))
-        if not fixed_id and #nodes > 0 then
+        local fixed_val = uci_cursor:get("xc", "main", "fixed_proxy_id")
+        local fixed_id = nil
+        if fixed_val and (tostring(fixed_val):lower() == "auto" or tostring(fixed_val) == "0") then
+            fixed_id = "auto"
+        elseif fixed_val and tonumber(fixed_val) then
+            fixed_id = tonumber(fixed_val)
+        elseif #nodes > 0 then
             fixed_id = nodes[1].id
         end
         return { version = 1, fixed_proxy_id = fixed_id or 1, nodes = nodes }
@@ -607,6 +612,12 @@ local function make_probe_config(node, socks_port)
 end
 
 
+local function extract_host_from_url(url)
+    if not url then return nil end
+    local host = url:match("^%a+://([^/:]+)")
+    return host
+end
+
 local function make_config(node, socks_port, http_port)
     local s_host = setting("socks_host") or setting("listen_host")
     local s_port = tonumber(socks_port or setting("socks_port") or 7890)
@@ -665,6 +676,15 @@ local function make_config(node, socks_port, http_port)
                 {type = "field", ip = {"geoip:private"}, outboundTag = "direct"},
                 {type = "field", domain = {"geosite:private"}, outboundTag = "direct"},
                 {type = "field", ip = {"192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12", "127.0.0.0/8"}, outboundTag = "direct"},
+                -- 核心修复：健康检查与探针专用安全路由，强制直达活动节点，彻底防止固定节点故障导致回滚死锁
+                (function()
+                    local bypass = {"full:cp.cloudflare.com", "full:detectportal.firefox.com", "domain:ipify.org"}
+                    local hh = extract_host_from_url(setting("health_url"))
+                    local ph = extract_host_from_url(setting("probe_url"))
+                    if hh and not hh:match("^%d+%.%d+%.%d+%.%d+$") then table.insert(bypass, "full:" .. hh) end
+                    if ph and not ph:match("^%d+%.%d+%.%d+%.%d+$") and ph ~= hh then table.insert(bypass, "full:" .. ph) end
+                    return {type = "field", domain = bypass, outboundTag = "proxy-selected"}
+                end)(),
                 {type = "field", domain = {"geosite:openai", "geosite:youtube", "geosite:twitter", "geosite:telegram", "geosite:tiktok", "geosite:netflix", "geosite:google", "geosite:facebook", "full:voice.google.com", "domain:voice.googleusercontent.com"}, outboundTag = "proxy"},
                 {type = "field", domain = {"geosite:geolocation-!cn"}, outboundTag = "proxy-selected"},
                 {type = "field", ip = {"geoip:cn"}, outboundTag = "direct"},
@@ -675,11 +695,23 @@ local function make_config(node, socks_port, http_port)
 end
 
 local function make_config_for(nodes, node, socks_port, http_port)
+    local fixed_id = nodes and nodes.fixed_proxy_id
     local fixed = nil
-    if nodes and nodes.fixed_proxy_id then
-        fixed = find_node(nodes, nodes.fixed_proxy_id)
+    if not fixed_id or tostring(fixed_id) == "0" or tostring(fixed_id):lower() == "auto" then
+        fixed = node
+        node._fixed_mode = "auto"
+    else
+        fixed = find_node(nodes, fixed_id)
+        if not fixed then
+            -- 指定的固定节点不存在，自动降级为当前节点
+            fixed = node
+            node._fixed_fallback = true
+            node._fixed_mode = "fallback_missing"
+        else
+            node._fixed_mode = "manual"
+        end
     end
-    node._fixed_proxy = fixed or node
+    node._fixed_proxy = fixed
     return make_config(node, socks_port, http_port)
 end
 
@@ -708,28 +740,8 @@ local function probe(node, port, timeout_sec)
     local target_url = setting("probe_url") or "http://www.gstatic.com/generate_204"
     local proxy_host = setting("proxy_host") or "127.0.0.1"
 
-    -- 智能通道复用：若为当前运行的活动节点，直接使用现有 SOCKS 代理测速
-    local cur_id = current_id()
-    local p = io.popen("pgrep -f 'xray run -c'")
-    local main_pid = p and p:read("*l")
-    if p then p:close() end
-
-    local s_port = tonumber(setting("socks_port") or 7890)
-    if main_pid and cur_id and tonumber(node.id) == cur_id and check_port_listening(s_port) then
-        local curl_cmd = string.format(
-            "curl --silent --show-error --connect-timeout %d --max-time %d -o /dev/null -w '%%{time_total} %%{http_code}' --proxy socks5h://%s:%d %s 2>/dev/null",
-            connect_timeout, timeout, proxy_host, s_port, shell_quote(target_url)
-        )
-        local c = io.popen(curl_cmd)
-        local result = c and c:read("*a") or ""
-        if c then c:close() end
-        local seconds, status = result:match("([%d%.]+)%s+(%d%d%d)")
-        local n = tonumber(seconds)
-        if not n or status == "000" then return nil end
-        return math.floor(n * 1000 + 0.5)
-    end
-
-    -- 非活动节点：拉起极简微型实例进行测试（无 geosite/geoip 依赖，启动毫秒级）
+    -- 核心修复：严禁复用主代理 7890 测试活动节点，因为主代理的分流规则会把 gstatic 等请求引向固定节点造成假阳性误报。
+    -- 所有节点统一使用隔离的临时微型实例进行端到端独立真实测速。
     local ready, err_msg, st = ensure_core_files()
     if not ready then
         return nil
@@ -875,6 +887,51 @@ local function select_node(id)
     return true
 end
 
+local function select_fixed_node(id_or_auto)
+    ensure_runtime_dirs()
+    local ready, err_msg, st = ensure_core_files()
+    if not ready then
+        return false, err_msg
+    end
+    local data = nodes_data()
+    local target_id = nil
+    if tostring(id_or_auto):lower() == "auto" or tostring(id_or_auto) == "0" then
+        target_id = "auto"
+    else
+        local nid = tonumber(id_or_auto)
+        local node = nid and find_node(data, nid)
+        if not node then
+            io.stderr:write("unknown fixed node: " .. tostring(id_or_auto) .. "\n")
+            return false, "unknown fixed node"
+        end
+        target_id = tostring(nid)
+    end
+
+    if uci_cursor then
+        uci_cursor:set("xc", "main", "fixed_proxy_id", target_id)
+        pcall(uci_cursor.commit, uci_cursor, "xc")
+    end
+    data.fixed_proxy_id = target_id
+    pcall(write, NODES_FILE, json.stringify(data, 1))
+
+    local cur = current_id() or (data.nodes and data.nodes[1] and data.nodes[1].id)
+    if cur then
+        local cur_node = find_node(data, cur) or data.nodes[1]
+        local config = VAR_DIR .. "/config.new.json"
+        write(config, json.stringify(make_config_for(data, cur_node), 1))
+        if run(xray_command("run -test -c " .. shell_quote(config) .. " >/tmp/xc-test.log 2>&1", st)) then
+            os.rename(config, CONFIG_FILE)
+            os.execute("ln -sf " .. shell_quote(CONFIG_FILE) .. " " .. shell_quote(COMPAT_CONFIG) .. " 2>/dev/null")
+            run("/etc/init.d/xc restart >/dev/null 2>&1")
+        else
+            os.remove(config)
+            return false, "xray test failed"
+        end
+    end
+    io.write("fixed proxy updated to: " .. tostring(target_id) .. "\n")
+    return true
+end
+
 local function test_current()
     local s_port = tonumber(setting("socks_port") or 7890)
     local h_port = tonumber(setting("http_port") or 10809)
@@ -939,7 +996,25 @@ if command == "list" then
 elseif command == "current" then
     local id = current_id()
     local node = id and find_node(data, id)
-    if node then io.write(string.format("%d [%s] %s\n", id, node.type, node.name)) else io.write("none\n") end
+    local fid = data.fixed_proxy_id
+    local fnode = fid and find_node(data, fid)
+    local cur_str = node and string.format("Active: %d [%s] %s", id, node.type, node.name) or "Active: none"
+    local fix_str = ""
+    if not fid or tostring(fid):lower() == "auto" or tostring(fid) == "0" then
+        fix_str = "Fixed: auto (follows active node)"
+    elseif fnode then
+        fix_str = string.format("Fixed: %d [%s] %s", fnode.id, fnode.type, fnode.name)
+    else
+        fix_str = string.format("Fixed: %s (fallback to active)", tostring(fid))
+    end
+    io.write(cur_str .. " | " .. fix_str .. "\n")
+elseif command == "fixed" then
+    local fid = arg[2]
+    if not fid then
+        io.stderr:write("usage: xc fixed <id|auto>\n"); os.exit(2)
+    end
+    local ok, err = select_fixed_node(fid)
+    os.exit(ok and 0 or 1)
 elseif command == "status" then
     local p = io.popen("pgrep -f 'xray run -c'")
     local pid = p and p:read("*l")
@@ -1057,6 +1132,6 @@ elseif tonumber(command) then
     local ok = select_node(tonumber(command))
     os.exit(ok and 0 or 1)
 else
-    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc enable | xc disable | xc generate [path] [id] | xc test | xc migrate | xc set-source <core> [asset]\n")
+    io.stderr:write("usage: xc list | xc <id> | xc switch <id> | xc fixed <id|auto> | xc current | xc probe <id> | xc status | xc restart | xc start | xc stop | xc enable | xc disable | xc generate [path] [id] | xc test | xc migrate | xc set-source <core> [asset]\n")
     os.exit(2)
 end

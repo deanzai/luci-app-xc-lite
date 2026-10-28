@@ -39,7 +39,7 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.18-1)
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.19-1)
 ├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
@@ -181,6 +181,21 @@ xc rollback      # 恢复上一份配置
 ---
 
 ## 版本历史与更新日志 (Changelog)
+
+### [v1.0.19-1] - 2026-10-28
+#### 核心修复 & 双节点容灾重构
+- **解除固定节点导致的活动节点切换死锁**：
+  - 修复 `select_node` 切换活动节点时，健康检查（`gstatic.com`）命中常用大站固定分流规则，因固定节点故障导致健康检查超时触发强制配置回滚的致命缺陷；
+  - 引入路由安全白名单直通机制：`health_url` 与 `probe_url` 域名强制直通 `proxy-selected`，确保活动节点切换不受固定分流节点故障影响。
+- **固定节点智能降级与独立控制 (Fallback & Dual-Node Control)**：
+  - 新增 `xc fixed <id>` 与 `xc fixed auto`（或 `xc fixed 0`）核心命令：支持手动切换固定分流节点，或设置为 `auto` 自动跟随当前活动节点；
+  - 核心生成引擎新增自动降级：当固定节点未配置或不存在时，常用分流（OpenAI, YouTube, Google 等）自动无缝降级由当前活动节点接管，杜绝服务瘫痪；
+  - CLI `xc current` 全面升级为双节点可视化显示（如 `Active: 2 | Fixed: auto`）；
+  - rpcd 后端（`/usr/libexec/rpcd/luci.xc`）新增 `switch_fixed_node` 方法并在 ubus 注册。
+- **根治探针假阳性误报**：
+  - 彻底移除对活动节点复用 7890 主代理端口的测速逻辑，杜绝测速流量被主路由分流引向固定节点造成的假阳性误报；所有节点统一使用隔离微型实例独立直测。
+
+---
 
 ### [v1.0.18-1] - 2026-09-14
 #### Bug 修复 & 前端稳健性加固

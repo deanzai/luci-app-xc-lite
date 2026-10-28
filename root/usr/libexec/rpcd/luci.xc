@@ -283,7 +283,7 @@ local function sync_json_compat(nodes_payload, settings_payload)
     end
 end
 
-local APP_VERSION = "1.0.18-1"
+local APP_VERSION = "1.0.19-1"
 
 local methods = {
     get_status = function()
@@ -346,6 +346,19 @@ local methods = {
         end
         local tmp_log = "/tmp/xc-switch.log"
         local ret = os.execute("/usr/bin/xc switch " .. tostring(id) .. " >" .. tmp_log .. " 2>&1")
+        local out = read_file(tmp_log) or ""
+        os.remove(tmp_log)
+        output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
+    end,
+
+    switch_fixed_node = function(params)
+        local target = params and (params.id or params.fixed_proxy_id)
+        if target == nil or tostring(target) == "" then
+            output_json({ code = 1, message = "invalid fixed node id" })
+            return
+        end
+        local tmp_log = "/tmp/xc-fixed-switch.log"
+        local ret = os.execute("/usr/bin/xc fixed " .. tostring(target) .. " >" .. tmp_log .. " 2>&1")
         local out = read_file(tmp_log) or ""
         os.remove(tmp_log)
         output_json({ code = (ret == 0) and 0 or 1, message = sanitize_output(out) })
@@ -688,13 +701,13 @@ local methods = {
 -- rpcd Dispatcher
 local action = arg[1]
 if action == "list" then
-    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"switch_source":{"core_source":"","asset_source":""},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0},"restart_service":{},"stop_service":{}}\n')
+    io.write('{"get_status":{},"get_nodes":{},"switch_node":{"id":0},"switch_fixed_node":{"id":0},"probe_node":{"id":0},"save_node":{"node":{}},"delete_node":{"id":0},"switch_source":{"core_source":"","asset_source":""},"test_health":{},"get_settings":{},"save_settings":{"settings":{},"fixed_proxy_id":0},"restart_service":{},"stop_service":{}}\n')
 elseif action == "call" then
     local method = arg[2]
     local fn = methods[method]
     if fn then
         local params = {}
-        if method == "switch_node" or method == "probe_node" or method == "save_node" or method == "delete_node" or method == "switch_source" or method == "save_settings" then
+        if method == "switch_node" or method == "switch_fixed_node" or method == "probe_node" or method == "save_node" or method == "delete_node" or method == "switch_source" or method == "save_settings" then
             params = parse_stdin()
         end
         fn(params)
