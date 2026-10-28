@@ -28,10 +28,12 @@ chmod 0755 "$BUILD_DIR/data/etc/uci-defaults/80_luci-app-xc"
 # 获取版本号
 PKG_VER=$(grep -E '^PKG_VERSION:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
 PKG_REL=$(grep -E '^PKG_RELEASE:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
-[ -n "$PKG_VER" ] || PKG_VER="1.0.14"
+[ -n "$PKG_VER" ] || PKG_VER="1.0.20"
 [ -n "$PKG_REL" ] || PKG_REL="1"
 FULL_VER="${PKG_VER}-${PKG_REL}"
 APK_VER="${PKG_VER}-r${PKG_REL}"
+COMMIT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "d4605d3")
+BUILD_DATE=$(date +%s)
 
 # 生成 control 文件
 cat > "$BUILD_DIR/control/control" << EOF
@@ -115,12 +117,12 @@ pkgname = luci-app-xc
 pkgver = ${APK_VER}
 pkgdesc = LuCI Web interface for xc (Xray node switcher and router)
 url = https://github.com/deanzai/luci-app-xc-lite
-builddate = 1725796800
+builddate = ${BUILD_DATE}
 packager = deanzai
 size = 28672
 arch = all
 origin = luci-app-xc
-commit = 102ea11
+commit = ${COMMIT_HASH}
 EOF
 
 cd "$APK_DIR"
