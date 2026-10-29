@@ -599,7 +599,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('插件版本')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.20-1').replace(/^v/, ''))
+						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.21-1').replace(/^v/, ''))
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -1508,7 +1508,7 @@ return view.extend({
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, [
 				_('xc 节点切换与分流管理器'),
-				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.20-1').replace(/^v/, ''))
+				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.21-1').replace(/^v/, ''))
 			]),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),

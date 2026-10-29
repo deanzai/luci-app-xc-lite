@@ -4,7 +4,19 @@ from typing import Dict, Any, List, Optional, Tuple
 PRESET_ROUTING_RULES = [
     {
         "type": "field",
+        "ip": ["223.5.5.5", "119.29.29.29"],
+        "port": 53,
+        "outboundTag": "direct"
+    },
+    {
+        "type": "field",
         "inboundTag": ["dns-proxy"],
+        "outboundTag": "proxy-selected"
+    },
+    {
+        "type": "field",
+        "ip": ["1.1.1.1", "1.0.0.1", "8.8.8.8"],
+        "port": 443,
         "outboundTag": "proxy-selected"
     },
     {
@@ -55,12 +67,12 @@ PRESET_ROUTING_RULES = [
     },
     {
         "type": "field",
-        "ip": ["geoip:cn"],
+        "domain": ["geosite:cn"],
         "outboundTag": "direct"
     },
     {
         "type": "field",
-        "domain": ["geosite:cn"],
+        "ip": ["geoip:cn"],
         "outboundTag": "direct"
     }
 ]
@@ -68,11 +80,34 @@ PRESET_ROUTING_RULES = [
 DNS_CONFIG = {
     "servers": [
         {
-            "queryStrategy": "UseIPv4",
-            "skipFallback": True,
+            "address": "223.5.5.5",
+            "port": 53,
+            "domains": [
+                "geosite:cn"
+            ],
+            "expectIPs": [
+                "geoip:cn"
+            ],
+            "skipFallback": True
+        },
+        {
+            "address": "https://1.1.1.1/dns-query",
             "tag": "dns-proxy",
-            "address": "https://1.1.1.1/dns-query"
-        }
+            "domains": [
+                "geosite:geolocation-!cn",
+                "geosite:openai",
+                "geosite:youtube",
+                "geosite:twitter",
+                "geosite:telegram",
+                "geosite:tiktok",
+                "geosite:netflix",
+                "geosite:google",
+                "geosite:facebook"
+            ],
+            "skipFallback": True,
+            "queryStrategy": "UseIPv4"
+        },
+        "localhost"
     ],
     "queryStrategy": "UseIPv4",
     "disableFallback": True
@@ -300,7 +335,7 @@ def generate_xray_config(settings: Dict[str, Any], nodes_data: Dict[str, Any], a
         "inbounds": inbounds,
         "outbounds": outbounds,
         "routing": {
-            "domainStrategy": "AsIs",
+            "domainStrategy": "IPIfNonMatch",
             "rules": copy.deepcopy(PRESET_ROUTING_RULES)
         },
         "dns": copy.deepcopy(DNS_CONFIG)

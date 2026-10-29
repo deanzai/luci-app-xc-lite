@@ -39,7 +39,7 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.20-1)
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.21-1)
 ├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
@@ -181,6 +181,18 @@ xc rollback      # 恢复上一份配置
 ---
 
 ## 版本历史与更新日志 (Changelog)
+
+### [v1.0.21-1] - 2026-10-29
+#### 架构升级：官方推荐标准智能双分流 DNS (Smart Dual-Split DNS)
+- **智能双分流 DNS 架构集成**：
+  - 参照 Xray 官方现代规范（Split DNS），在生成器与 CLI (`/usr/bin/xc`) 中深度集成双分流 DNS 体系；
+  - **国内 DNS 专属分流**：绑定 `223.5.5.5`（阿里公共 DNS），关联 `geosite:cn` 与 `geoip:cn` expectIPs，直连国内出站，彻底解决国内域名 CDN 解析劣化问题；
+  - **海外安全 DoH 分流**：绑定 `https://1.1.1.1/dns-query` (Cloudflare DoH)，关联 `geosite:geolocation-!cn`、`geosite:openai`、`geosite:google` 等海外大厂域名，打上 `dns-proxy` 标签走主活动代理，零 DNS 泄露与防运营商劫持；
+  - **启用 `domainStrategy: "IPIfNonMatch"`**：彻底根治国内冷门/生僻网站未收录在 `geosite:cn` 时误走海外代理的问题，先匹配域名规则，未命中时通过国内 DNS 智能反查真实 IP 并比对 `geoip:cn` 精准直连；
+  - **短路性能优化**：路由规则中将 `geosite:cn` 调整至 `geoip:cn` 之前，常见国内网站瞬间域名命中直连，避免冗余 DNS 往返耗时；
+  - **测试覆盖强化**：新增 `tests/test_split_dns_config.py` 自动化测试套件，全面核查双分流结构与路由优先级。
+
+---
 
 ### [v1.0.20-1] - 2026-10-28
 #### Bug 修复 & 新增功能

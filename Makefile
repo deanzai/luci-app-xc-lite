@@ -5,7 +5,7 @@ LUCI_DEPENDS:=+luci-base +rpcd +rpcd-mod-file +xray-core +curl +netstat +libuci-
 LUCI_PKGARCH:=all
 
 PKG_NAME:=luci-app-xc
-PKG_VERSION:=1.0.20
+PKG_VERSION:=1.0.21
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 

@@ -123,12 +123,47 @@ class TestXCGenerator(unittest.TestCase):
         self.assertIn("direct", outbound_tags)
         self.assertIn("block", outbound_tags)
 
-        # Verify routing
-        self.assertEqual(cfg["routing"]["domainStrategy"], "AsIs")
-        self.assertTrue(len(cfg["routing"]["rules"]) >= 9)
+        # Verify routing with smart split strategy
+        self.assertEqual(cfg["routing"]["domainStrategy"], "IPIfNonMatch")
+        self.assertTrue(len(cfg["routing"]["rules"]) >= 10)
 
-        # Verify DNS
-        self.assertTrue(len(cfg["dns"]["servers"]) >= 1)
+        # Verify DNS split routing rules
+        direct_dns_rules = [
+            r for r in cfg["routing"]["rules"]
+            if r.get("outboundTag") == "direct" and "223.5.5.5" in r.get("ip", [])
+        ]
+        self.assertTrue(len(direct_dns_rules) >= 1, "Must contain direct routing rule for domestic DNS")
+
+        proxy_dns_rules = [
+            r for r in cfg["routing"]["rules"]
+            if r.get("outboundTag") == "proxy-selected" and "dns-proxy" in r.get("inboundTag", [])
+        ]
+        self.assertTrue(len(proxy_dns_rules) >= 1, "Must contain proxy routing rule for foreign DoH")
+
+        # Verify geosite:cn before geoip:cn for optimal short-circuit routing
+        rule_order = [
+            "geosite:cn" if "geosite:cn" in r.get("domain", []) else ("geoip:cn" if "geoip:cn" in r.get("ip", []) else None)
+            for r in cfg["routing"]["rules"]
+        ]
+        rule_order = [r for r in rule_order if r]
+        self.assertEqual(rule_order, ["geosite:cn", "geoip:cn"], "geosite:cn must precede geoip:cn")
+
+        # Verify Dual Split DNS servers
+        servers = cfg["dns"]["servers"]
+        self.assertTrue(len(servers) >= 2, "DNS must have at least domestic and foreign servers")
+        
+        # Check domestic server
+        cn_server = next((s for s in servers if isinstance(s, dict) and s.get("address") == "223.5.5.5"), None)
+        self.assertIsNotNone(cn_server, "Domestic DNS 223.5.5.5 must be present")
+        self.assertIn("geosite:cn", cn_server.get("domains", []))
+        self.assertIn("geoip:cn", cn_server.get("expectIPs", []))
+
+        # Check foreign DoH server
+        doh_server = next((s for s in servers if isinstance(s, dict) and "1.1.1.1" in s.get("address", "")), None)
+        self.assertIsNotNone(doh_server, "Foreign DoH 1.1.1.1 must be present")
+        self.assertEqual(doh_server.get("tag"), "dns-proxy")
+        self.assertIn("geosite:geolocation-!cn", doh_server.get("domains", []))
+        self.assertIn("geosite:openai", doh_server.get("domains", []))
 
 
 class TestXCAPIServer(unittest.TestCase):

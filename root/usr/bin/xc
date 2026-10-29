@@ -21,7 +21,7 @@ local COMPAT_CURRENT = ROOT .. "/current"
 local PREV_CONFIG = VAR_DIR .. "/config.previous"
 local PREV_CURRENT = VAR_DIR .. "/current.previous"
 
-local APP_VERSION = "1.0.20-1"
+local APP_VERSION = "1.0.21-1"
 
 local DEFAULT_SETTINGS = {
     enabled = "1",
@@ -636,12 +636,37 @@ local function make_config(node, socks_port, http_port)
             loglevel = l_lvl
         },
         dns = {
-            servers = {{
-                address = "https://1.1.1.1/dns-query",
-                tag = "dns-proxy",
-                skipFallback = true,
-                queryStrategy = "UseIPv4"
-            }},
+            servers = {
+                {
+                    address = "223.5.5.5",
+                    port = 53,
+                    domains = {
+                        "geosite:cn"
+                    },
+                    expectIPs = {
+                        "geoip:cn"
+                    },
+                    skipFallback = true
+                },
+                {
+                    address = "https://1.1.1.1/dns-query",
+                    tag = "dns-proxy",
+                    domains = {
+                        "geosite:geolocation-!cn",
+                        "geosite:openai",
+                        "geosite:youtube",
+                        "geosite:twitter",
+                        "geosite:telegram",
+                        "geosite:tiktok",
+                        "geosite:netflix",
+                        "geosite:google",
+                        "geosite:facebook"
+                    },
+                    skipFallback = true,
+                    queryStrategy = "UseIPv4"
+                },
+                "localhost"
+            },
             disableFallback = true,
             queryStrategy = "UseIPv4"
         },
@@ -669,9 +694,12 @@ local function make_config(node, socks_port, http_port)
             {tag = "block", protocol = "blackhole"}
         },
         routing = {
-            domainStrategy = "AsIs",
+            domainStrategy = "IPIfNonMatch",
             rules = {
+                -- 双分流 DNS 规则：国内 DNS 直连，海外加密 DoH 走主活动代理
+                {type = "field", ip = {"223.5.5.5", "119.29.29.29"}, port = 53, outboundTag = "direct"},
                 {type = "field", inboundTag = {"dns-proxy"}, outboundTag = "proxy-selected"},
+                {type = "field", ip = {"1.1.1.1", "1.0.0.1", "8.8.8.8"}, port = 443, outboundTag = "proxy-selected"},
                 {type = "field", domain = {"geosite:category-ads-all"}, outboundTag = "block"},
                 {type = "field", ip = {"geoip:private"}, outboundTag = "direct"},
                 {type = "field", domain = {"geosite:private"}, outboundTag = "direct"},
@@ -687,8 +715,8 @@ local function make_config(node, socks_port, http_port)
                 end)(),
                 {type = "field", domain = {"geosite:openai", "geosite:youtube", "geosite:twitter", "geosite:telegram", "geosite:tiktok", "geosite:netflix", "geosite:google", "geosite:facebook", "full:voice.google.com", "domain:voice.googleusercontent.com"}, outboundTag = "proxy"},
                 {type = "field", domain = {"geosite:geolocation-!cn"}, outboundTag = "proxy-selected"},
-                {type = "field", ip = {"geoip:cn"}, outboundTag = "direct"},
                 {type = "field", domain = {"geosite:cn"}, outboundTag = "direct"},
+                {type = "field", ip = {"geoip:cn"}, outboundTag = "direct"},
             }
         }
     }

@@ -28,7 +28,7 @@ chmod 0755 "$BUILD_DIR/data/etc/uci-defaults/80_luci-app-xc"
 # 获取版本号
 PKG_VER=$(grep -E '^PKG_VERSION:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
 PKG_REL=$(grep -E '^PKG_RELEASE:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
-[ -n "$PKG_VER" ] || PKG_VER="1.0.20"
+[ -n "$PKG_VER" ] || PKG_VER="1.0.21"
 [ -n "$PKG_REL" ] || PKG_REL="1"
 FULL_VER="${PKG_VER}-${PKG_REL}"
 APK_VER="${PKG_VER}-r${PKG_REL}"
@@ -69,7 +69,11 @@ cat > "$BUILD_DIR/control/postinst" << 'EOF'
     fi
     if [ "$(uci -q get xc.main.enabled)" != "0" ]; then
         /etc/init.d/xc enable 2>/dev/null
-        /etc/init.d/xc restart 2>/dev/null || true
+        if [ -x /usr/bin/xc ]; then
+            /usr/bin/xc restart >/dev/null 2>&1 || /etc/init.d/xc restart 2>/dev/null || true
+        else
+            /etc/init.d/xc restart 2>/dev/null || true
+        fi
     else
         /etc/init.d/xc disable 2>/dev/null
     fi
