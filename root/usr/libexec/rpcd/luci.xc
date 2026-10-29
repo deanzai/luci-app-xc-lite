@@ -304,7 +304,7 @@ local function sync_json_compat(nodes_payload, settings_payload)
     end
 end
 
-local APP_VERSION = "1.0.22-1"
+local APP_VERSION = "1.0.23-1"
 
 local methods = {
     get_status = function()

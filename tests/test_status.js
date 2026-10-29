@@ -9,7 +9,7 @@ async function testStatusView() {
 	const mockStatus = {
 		running: true,
 		pid: 4567,
-		version: '1.0.22-1',
+		version: '1.0.23-1',
 		current_id: 1,
 		fixed_proxy_id: 2,
 		socks_listening: true,
@@ -40,7 +40,7 @@ async function testStatusView() {
 	assert.ok(header, 'renderStatusHeader must return a DOM node');
 
 	const text = header.textContent;
-	assert.ok(text.includes('1.0.22-1'), 'Header must display plugin version');
+	assert.ok(text.includes('1.0.23-1'), 'Header must display plugin version');
 	assert.ok(text.includes('4567'), 'Header must display process PID');
 	assert.ok(text.includes('Active HK') || text.includes('#1'), 'Header must display current active node name or ID');
 	assert.ok(text.includes('Fixed US') || text.includes('#2'), 'Header must display fixed proxy node');

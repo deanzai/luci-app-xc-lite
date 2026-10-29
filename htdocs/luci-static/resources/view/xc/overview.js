@@ -599,7 +599,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title' }, _('插件版本')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.22-1').replace(/^v/, ''))
+						E('span', { 'style': 'font-weight:bold; color:#4b5563;' }, 'v' + (status.app_version || '1.0.23-1').replace(/^v/, ''))
 					])
 				]),
 				E('div', { 'class': 'cbi-value' }, [
@@ -611,31 +611,63 @@ return view.extend({
 						isRunning ? E('button', {
 							'class': 'cbi-button',
 							'style': 'margin-left: 10px;',
-							'click': function() {
-								ui.showModal(_('正在重启服务'), [ E('p', {}, _('正在平滑重载 Xray 核心服务并执行连通性校验...')) ]);
+							'click': function(ev) {
+								ev.target.disabled = true;
+								var btn = ev.target;
+								ui.showModal(_('正在重启服务'), [
+									E('div', { 'style': 'text-align:center; padding:10px 0;' }, [
+										E('div', { 'class': 'spinning', 'style': 'display:inline-block; margin-bottom:10px; font-size:24px;' }, '⏳'),
+										E('p', {}, _('正在平滑重载 Xray 核心服务并执行连通性校验...')),
+										E('div', { 'style': 'text-align:center; margin-top:12px;' }, [
+											E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': function() { ui.hideModal(); btn.disabled = false; } }, _('关闭提示'))
+										])
+									])
+								]);
 								callRestartService().then(function(res) {
 									ui.hideModal();
+									btn.disabled = false;
 									if (res && res.code === 0) {
 										ui.addNotification(null, E('p', {}, _('服务重启成功！')), 'success');
 									} else {
 										ui.addNotification(null, E('p', {}, _('服务重启失败: ') + (res.message || '')), 'danger');
 									}
-									window.location.reload();
+									window.setTimeout(function() { window.location.reload(); }, 600);
+								}).catch(function(err) {
+									ui.hideModal();
+									btn.disabled = false;
+									ui.addNotification(null, E('p', {}, _('重启请求超时或异常: ') + ((err && err.message) || '')), 'danger');
+									window.setTimeout(function() { window.location.reload(); }, 2500);
 								});
 							}
 						}, _('⟳ 重启服务')) : E('button', {
 							'class': 'cbi-button cbi-button-save',
 							'style': 'margin-left: 10px; font-weight:bold;',
-							'click': function() {
-								ui.showModal(_('正在启动服务'), [ E('p', {}, _('正在启动 Xray 核心服务并执行连通性校验...')) ]);
+							'click': function(ev) {
+								ev.target.disabled = true;
+								var btn = ev.target;
+								ui.showModal(_('正在启动服务'), [
+									E('div', { 'style': 'text-align:center; padding:10px 0;' }, [
+										E('div', { 'class': 'spinning', 'style': 'display:inline-block; margin-bottom:10px; font-size:24px;' }, '⏳'),
+										E('p', {}, _('正在启动 Xray 核心服务并执行连通性校验...')),
+										E('div', { 'style': 'text-align:center; margin-top:12px;' }, [
+											E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': function() { ui.hideModal(); btn.disabled = false; } }, _('关闭提示'))
+										])
+									])
+								]);
 								callRestartService().then(function(res) {
 									ui.hideModal();
+									btn.disabled = false;
 									if (res && res.code === 0) {
 										ui.addNotification(null, E('p', {}, _('服务启动成功！')), 'success');
 									} else {
 										ui.addNotification(null, E('p', {}, _('服务启动失败: ') + (res.message || '')), 'danger');
 									}
-									window.location.reload();
+									window.setTimeout(function() { window.location.reload(); }, 600);
+								}).catch(function(err) {
+									ui.hideModal();
+									btn.disabled = false;
+									ui.addNotification(null, E('p', {}, _('启动请求超时或异常: ') + ((err && err.message) || '')), 'danger');
+									window.setTimeout(function() { window.location.reload(); }, 2500);
 								});
 							}
 						}, _('▶ 启动服务')),
@@ -644,7 +676,7 @@ return view.extend({
 							'style': 'margin-left: 5px;',
 							'click': function() {
 								if (!confirm(_('确定停止服务吗？停止后代理端口将暂停监听。'))) return;
-								callStopService().then(function() { window.location.reload(); });
+								callStopService().then(function() { window.location.reload(); }).catch(function() { window.location.reload(); });
 							}
 						}, _('⏹ 停止')) : '',
 						E('button', {
@@ -652,7 +684,15 @@ return view.extend({
 							'style': 'margin-left: 5px;',
 							'click': function(ev) {
 								ev.target.disabled = true;
-								ui.showModal(_('健康检查'), [ E('p', {}, _('正在测试 SOCKS 与 HTTP 代理出口连通性...')) ]);
+								ui.showModal(_('健康检查'), [
+									E('div', { 'style': 'text-align:center; padding:10px 0;' }, [
+										E('div', { 'class': 'spinning', 'style': 'display:inline-block; margin-bottom:10px; font-size:24px;' }, '⏳'),
+										E('p', {}, _('正在测试 SOCKS 与 HTTP 代理出口连通性...')),
+										E('div', { 'style': 'text-align:center; margin-top:12px;' }, [
+											E('button', { 'class': 'cbi-button cbi-button-neutral', 'click': function() { ui.hideModal(); ev.target.disabled = false; } }, _('关闭提示'))
+										])
+									])
+								]);
 								callTestHealth().then(function(res) {
 									ui.hideModal();
 									ev.target.disabled = false;
@@ -661,6 +701,10 @@ return view.extend({
 									} else {
 										ui.addNotification(null, E('p', {}, _('出口检查异常: ') + (res.message || _('未知错误'))), 'danger');
 									}
+								}).catch(function(err) {
+									ui.hideModal();
+									ev.target.disabled = false;
+									ui.addNotification(null, E('p', {}, _('检查请求超时或异常: ') + ((err && err.message) || '')), 'danger');
 								});
 							}
 						}, _('测试双端口连通性'))
@@ -759,20 +803,46 @@ return view.extend({
 						'style': (isCur && !isRunning) ? 'font-weight:bold;' : '',
 						'click': function(ev) {
 							ev.target.disabled = true;
+							var btn = ev.target;
 							var actionDesc = (isCur && !isRunning) ? _('正在启动当前节点') : (_('正在切换到节点 #') + node.id + ' [' + node.name + ']...');
+							
 							ui.showModal((isCur && !isRunning) ? _('启动服务') : _('正在切换节点'), [
-								E('p', {}, actionDesc),
-								E('p', {}, _('正在执行 Xray 配置校验、平滑切换及全链路健康测试，请稍候...'))
+								E('div', { 'style': 'text-align:center; padding:10px 0;' }, [
+									E('div', { 'class': 'spinning', 'style': 'display:inline-block; margin-bottom:12px; font-size:26px;' }, '⏳'),
+									E('p', { 'style': 'font-weight:bold; font-size:14px; margin-bottom:6px;' }, actionDesc),
+									E('p', { 'style': 'color:#6b7280; font-size:12px; margin-bottom:16px;' }, _('正在执行 Xray 配置校验、平滑切换及全链路健康测试，请稍候...')),
+									E('div', { 'style': 'text-align:center;' }, [
+										E('button', {
+											'class': 'cbi-button cbi-button-neutral',
+											'click': function() {
+												ui.hideModal();
+												btn.disabled = false;
+											}
+										}, _('关闭提示 (后台继续处理)'))
+									])
+								])
 							]);
-							callSwitchNode(node.id).then(function(res) {
+
+							var finish = function(success, msg) {
 								ui.hideModal();
-								if (res && res.code === 0) {
+								btn.disabled = false;
+								if (success) {
 									ui.addNotification(null, E('p', {}, _('操作成功，节点已就绪！')), 'success');
-									window.location.reload();
+									window.setTimeout(function() { window.location.reload(); }, 600);
 								} else {
-									ui.addNotification(null, E('p', {}, _('操作失败，已自动回滚: ') + (res.message || '')), 'danger');
-									ev.target.disabled = false;
+									ui.addNotification(null, E('p', {}, _('操作未完成: ') + (msg || _('请刷新查看当前状态'))), 'danger');
+									window.setTimeout(function() { window.location.reload(); }, 2500);
 								}
+							};
+
+							callSwitchNode(node.id).then(function(res) {
+								if (res && res.code === 0) {
+									finish(true);
+								} else {
+									finish(false, res ? (res.message || _('健康检查未通过，已自动回滚')) : _('未知错误'));
+								}
+							}).catch(function(err) {
+								finish(false, (err && err.message) || _('请求超时或异常，已自动回滚'));
 							});
 						}
 					}, (isCur && !isRunning) ? _('▶ 启动服务') : _('切换')),
@@ -1508,7 +1578,7 @@ return view.extend({
 		var m = E('div', { 'class': 'cbi-map' }, [
 			E('h2', {}, [
 				_('xc 节点切换与分流管理器'),
-				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.22-1').replace(/^v/, ''))
+				E('span', { 'class': 'badge', 'style': 'background-color:#3b82f6; color:#fff; padding:2px 8px; border-radius:4px; font-size:12px; vertical-align:middle; margin-left:8px;' }, 'v' + (status.app_version || '1.0.23-1').replace(/^v/, ''))
 			]),
 			E('div', { 'class': 'cbi-map-descr' }, _('轻量级 Xray 节点切换与分流管理插件，支持 VLESS REALITY 与本地 NaiveProxy SOCKS 节点，提供全链路延迟测速、平滑切换与失败回滚。')),
 			this.renderMissingAlert(status),

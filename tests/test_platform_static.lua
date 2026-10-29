@@ -191,7 +191,7 @@ t.test("CLI entrypoint loads jsonc and uci modules safely", function()
   local source = read_file("root/usr/bin/xc")
   t.contains(source, 'require "luci.jsonc"')
   t.contains(source, 'pcall(require, "uci")')
-  t.contains(source, 'APP_VERSION = "1.0.22-1"')
+  t.contains(source, 'APP_VERSION = "1.0.23-1"')
 end)
 
 t.test("CLI core status recovers pending transactions before reading status", function()

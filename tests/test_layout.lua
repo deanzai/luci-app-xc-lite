@@ -14,7 +14,7 @@ end)
 t.test("package release and version are configured in Makefile", function()
   local makefile = read_file("Makefile")
   t.contains(makefile, "PKG_NAME:=luci-app-xc")
-  t.contains(makefile, "PKG_VERSION:=1.0.22")
+  t.contains(makefile, "PKG_VERSION:=1.0.23")
   t.contains(makefile, "PKG_RELEASE:=1")
 end)
 

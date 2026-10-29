@@ -21,7 +21,7 @@ local COMPAT_CURRENT = ROOT .. "/current"
 local PREV_CONFIG = VAR_DIR .. "/config.previous"
 local PREV_CURRENT = VAR_DIR .. "/current.previous"
 
-local APP_VERSION = "1.0.22-1"
+local APP_VERSION = "1.0.23-1"
 
 local DEFAULT_SETTINGS = {
     enabled = "1",
@@ -875,9 +875,9 @@ local function select_node(id)
     end
     local s_port = tonumber(setting("socks_port") or 7890)
     local ok = false
-    for _ = 1, 25 do
+    for _ = 1, 8 do
         sleep(1)
-        if check_port_listening(s_port) and run("curl --silent --show-error --max-time 3 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":" .. tostring(s_port) .. " " .. setting("health_url") .. " >/dev/null 2>&1") then
+        if check_port_listening(s_port) and run("curl --silent --show-error --max-time 2 -o /dev/null --proxy socks5h://" .. setting("proxy_host") .. ":" .. tostring(s_port) .. " " .. setting("health_url") .. " >/dev/null 2>&1") then
             ok = true
             break
         end
