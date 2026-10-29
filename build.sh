@@ -28,7 +28,7 @@ chmod 0755 "$BUILD_DIR/data/etc/uci-defaults/80_luci-app-xc"
 # 获取版本号
 PKG_VER=$(grep -E '^PKG_VERSION:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
 PKG_REL=$(grep -E '^PKG_RELEASE:=' Makefile | cut -d= -f2 | tr -d ' \r\n')
-[ -n "$PKG_VER" ] || PKG_VER="1.0.21"
+[ -n "$PKG_VER" ] || PKG_VER="1.0.22"
 [ -n "$PKG_REL" ] || PKG_REL="1"
 FULL_VER="${PKG_VER}-${PKG_REL}"
 APK_VER="${PKG_VER}-r${PKG_REL}"

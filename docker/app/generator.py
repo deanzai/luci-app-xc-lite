@@ -93,24 +93,12 @@ DNS_CONFIG = {
         {
             "address": "https://1.1.1.1/dns-query",
             "tag": "dns-proxy",
-            "domains": [
-                "geosite:geolocation-!cn",
-                "geosite:openai",
-                "geosite:youtube",
-                "geosite:twitter",
-                "geosite:telegram",
-                "geosite:tiktok",
-                "geosite:netflix",
-                "geosite:google",
-                "geosite:facebook"
-            ],
-            "skipFallback": True,
+            "skipFallback": False,
             "queryStrategy": "UseIPv4"
-        },
-        "localhost"
+        }
     ],
     "queryStrategy": "UseIPv4",
-    "disableFallback": True
+    "disableFallback": False
 }
 
 

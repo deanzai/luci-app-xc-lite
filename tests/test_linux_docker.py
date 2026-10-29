@@ -158,12 +158,13 @@ class TestXCGenerator(unittest.TestCase):
         self.assertIn("geosite:cn", cn_server.get("domains", []))
         self.assertIn("geoip:cn", cn_server.get("expectIPs", []))
 
-        # Check foreign DoH server
+        # Check foreign DoH server acts as global fallback
         doh_server = next((s for s in servers if isinstance(s, dict) and "1.1.1.1" in s.get("address", "")), None)
         self.assertIsNotNone(doh_server, "Foreign DoH 1.1.1.1 must be present")
         self.assertEqual(doh_server.get("tag"), "dns-proxy")
-        self.assertIn("geosite:geolocation-!cn", doh_server.get("domains", []))
-        self.assertIn("geosite:openai", doh_server.get("domains", []))
+        self.assertFalse(doh_server.get("skipFallback", True), "DoH server must be fallback server")
+        self.assertNotIn("domains", doh_server, "DoH fallback must not be restricted by domains")
+        self.assertNotIn("localhost", servers, "localhost must NOT be in DNS servers to prevent DNS leak")
 
 
 class TestXCAPIServer(unittest.TestCase):

@@ -9,7 +9,7 @@ async function testNodeManagement() {
 	const mockStatus = {
 		running: true,
 		current_id: 1,
-		version: '1.0.21-1'
+		version: '1.0.22-1'
 	};
 
 	const mockNodes = {

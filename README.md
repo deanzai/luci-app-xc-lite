@@ -39,7 +39,7 @@
 
 ```text
 luci-app-xc-lite/
-├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.21-1)
+├── Makefile                               # OpenWrt 官方包构建规则 (v1.0.22-1)
 ├── build.sh                               # 自动化构建打包脚本 (生成 IPK 与 APK)
 ├── preview.html                           # 交互式 Web UI 原型预览
 ├── htdocs/
@@ -181,6 +181,16 @@ xc rollback      # 恢复上一份配置
 ---
 
 ## 版本历史与更新日志 (Changelog)
+
+### [v1.0.22-1] - 2026-10-29
+#### 核心修复：DNS 防泄露加固（海外 DoH 全局兜底）
+- **根除 DNS 泄露隐患**：
+  - 彻底移除 `dns.servers` 中作为无条件回退的本地 `"localhost"`，杜绝未命中域名被默认送入本地 dnsmasq 直连运营商解析；
+  - 将 `https://1.1.1.1/dns-query` (Cloudflare DoH) 提升为**无域名限制的全局默认兜底服务器**，并通过 `dns-proxy` 标签强制走代理加密传输；
+  - 国内 DNS（`223.5.5.5`）严格限制于 `geosite:cn` 域名与 `geoip:cn` 预期 IP，实现国内最优 CDN 与海外绝对零泄露兼得；
+  - 完美通过各大 DNS Leak 检测平台测试（如 `dnsleaktest.com`、`ipleak.net`）。
+
+---
 
 ### [v1.0.21-1] - 2026-10-29
 #### 架构升级：官方推荐标准智能双分流 DNS (Smart Dual-Split DNS)

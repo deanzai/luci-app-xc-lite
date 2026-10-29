@@ -21,7 +21,7 @@ local COMPAT_CURRENT = ROOT .. "/current"
 local PREV_CONFIG = VAR_DIR .. "/config.previous"
 local PREV_CURRENT = VAR_DIR .. "/current.previous"
 
-local APP_VERSION = "1.0.21-1"
+local APP_VERSION = "1.0.22-1"
 
 local DEFAULT_SETTINGS = {
     enabled = "1",
@@ -651,23 +651,11 @@ local function make_config(node, socks_port, http_port)
                 {
                     address = "https://1.1.1.1/dns-query",
                     tag = "dns-proxy",
-                    domains = {
-                        "geosite:geolocation-!cn",
-                        "geosite:openai",
-                        "geosite:youtube",
-                        "geosite:twitter",
-                        "geosite:telegram",
-                        "geosite:tiktok",
-                        "geosite:netflix",
-                        "geosite:google",
-                        "geosite:facebook"
-                    },
-                    skipFallback = true,
+                    skipFallback = false,
                     queryStrategy = "UseIPv4"
-                },
-                "localhost"
+                }
             },
-            disableFallback = true,
+            disableFallback = false,
             queryStrategy = "UseIPv4"
         },
         inbounds = {

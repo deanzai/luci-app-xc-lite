@@ -21,10 +21,11 @@ class TestSplitDNSConfiguration(unittest.TestCase):
         self.assertIn('"geosite:cn"', self.xc_bin_content)
         self.assertIn('"geoip:cn"', self.xc_bin_content)
 
-        # 3. Verify foreign DoH server
+        # 3. Verify foreign DoH server acts as global fallback
         self.assertIn('address = "https://1.1.1.1/dns-query"', self.xc_bin_content)
         self.assertIn('tag = "dns-proxy"', self.xc_bin_content)
-        self.assertIn('"geosite:geolocation-!cn"', self.xc_bin_content)
+        self.assertIn('skipFallback = false', self.xc_bin_content)
+        self.assertNotIn('"localhost"', self.xc_bin_content)
 
         # 4. Verify routing rules for DNS separation
         self.assertIn('ip = {"223.5.5.5", "119.29.29.29"}', self.xc_bin_content)
@@ -76,10 +77,11 @@ class TestSplitDNSConfiguration(unittest.TestCase):
         # Assertions on DNS
         dns = cfg["dns"]
         self.assertEqual(dns["queryStrategy"], "UseIPv4")
-        self.assertTrue(dns["disableFallback"])
+        self.assertFalse(dns["disableFallback"])
         
         servers = dns["servers"]
-        self.assertEqual(len(servers), 3) # 223.5.5.5, 1.1.1.1, localhost
+        self.assertEqual(len(servers), 2) # 223.5.5.5, 1.1.1.1 (foreign fallback)
+        self.assertNotIn("localhost", servers)
         
         # Domestic DNS check
         s_cn = servers[0]
@@ -89,16 +91,12 @@ class TestSplitDNSConfiguration(unittest.TestCase):
         self.assertIn("geoip:cn", s_cn["expectIPs"])
         self.assertTrue(s_cn["skipFallback"])
 
-        # Foreign DoH check
+        # Foreign DoH check (acts as global fallback)
         s_foreign = servers[1]
         self.assertEqual(s_foreign["address"], "https://1.1.1.1/dns-query")
         self.assertEqual(s_foreign["tag"], "dns-proxy")
-        self.assertTrue(s_foreign["skipFallback"])
-        self.assertIn("geosite:geolocation-!cn", s_foreign["domains"])
-        self.assertIn("geosite:openai", s_foreign["domains"])
-
-        # Localhost fallback check
-        self.assertEqual(servers[2], "localhost")
+        self.assertFalse(s_foreign["skipFallback"])
+        self.assertNotIn("domains", s_foreign)
 
 
 if __name__ == "__main__":

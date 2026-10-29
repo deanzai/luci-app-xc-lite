@@ -9,7 +9,7 @@ async function runTests() {
 	const mockStatus = {
 		running: true,
 		pid: 12345,
-		version: '1.0.21-1',
+		version: '1.0.22-1',
 		current_id: 1,
 		fixed_proxy_id: 2,
 		socks_listening: true,
@@ -75,7 +75,7 @@ async function runTests() {
 	console.log('Test 1: view.load() fetches initial data');
 	const loadedData = await viewInstance.load();
 	assert.strictEqual(loadedData.length, 3, 'load() must return 3 promises for status, nodes, settings');
-	assert.strictEqual(loadedData[0].version, '1.0.21-1');
+	assert.strictEqual(loadedData[0].version, '1.0.22-1');
 	assert.strictEqual(loadedData[1].nodes.length, 3);
 	console.log('  PASS: view.load()');
 
